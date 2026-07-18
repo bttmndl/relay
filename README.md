@@ -1,0 +1,94 @@
+# RELAY ⚡
+
+*Nothing is yours until it moves.*
+
+A 3-minute flick game. All 16 pucks are neutral — the puck you flick becomes your **striker**, and everything it touches gets charged your color. Pot a charged puck for a point and shoot again. Sink your striker and the point goes to your rival (**poison**). Most banked when the clock hits 0:00 wins; ties go to sudden death — next pot wins.
+
+## Stack
+
+- **client/** — Vite + React (plain JS), canvas rendering, deterministic physics engine
+- **server/** — Express + Socket.IO (thin relay: matchmaking, input relay, state sync)
+
+Online play uses input-lockstep: both clients run the identical fixed-timestep engine (`client/src/engine.js`), the server just relays each flick `{idx, ang, v}`. After every shot the shooter sends a position/score snapshot which the opponent snaps to, so tiny float drift can never accumulate.
+
+## Local development
+
+Terminal 1 — server:
+```bash
+cd server
+npm install
+npm start          # listens on :3001
+```
+
+Terminal 2 — client:
+```bash
+cd client
+npm install
+cp .env.example .env    # VITE_SERVER_URL=http://localhost:3001
+npm run dev             # opens on :5173
+```
+
+Open two browser windows on `localhost:5173` → PLAY ONLINE → Create Room in one, Join with the code in the other.
+
+## Deployment (Render + Vercel)
+
+### Server → Render
+1. Push this repo to GitHub.
+2. Render → New → **Web Service** → pick the repo.
+3. **Root Directory:** `server`
+4. **Build Command:** `npm install` — **Start Command:** `npm start`
+5. Environment variables:
+   - `CLIENT_ORIGIN` = your Vercel URL (e.g. `https://relay-yourname.vercel.app`) — or leave unset for `*` while testing.
+6. Note the service URL, e.g. `https://relay-server-xxxx.onrender.com`.
+
+Free-tier note: Render free instances sleep after inactivity; the first connection after a sleep takes ~30–50s. The client shows "CONNECTING TO SERVER…" until the socket is up.
+
+### Client → Vercel
+1. Vercel → New Project → same repo.
+2. **Root Directory:** `client` (framework auto-detects Vite).
+3. Environment variable:
+   - `VITE_SERVER_URL` = your Render URL (e.g. `https://relay-server-xxxx.onrender.com`)
+4. Deploy. Remember: `VITE_*` variables are baked in at build time — redeploy after changing them.
+
+Then set `CLIENT_ORIGIN` on Render to the final Vercel domain and redeploy the server (locks CORS to your app).
+
+## Project layout
+
+```
+relay/
+├── README.md
+├── server/
+│   ├── package.json
+│   └── index.js            # rooms, quick match, flick relay, sync relay, rematch
+└── client/
+    ├── package.json
+    ├── vite.config.js
+    ├── index.html
+    ├── .env.example
+    └── src/
+        ├── main.jsx
+        ├── App.jsx         # menu + online lobby
+        ├── net.js          # socket singleton (VITE_SERVER_URL)
+        ├── engine.js       # deterministic game logic (shared by all modes)
+        └── RelayGame.jsx   # canvas rendering, input, sfx, net hooks
+```
+
+## Game rules (v1)
+
+- 16 neutral pucks, 4 corner ports, 3:00 match clock (runs through everything)
+- On your turn flick **any** puck — it becomes your striker
+- Chain charging: striker or any charged puck touching a neutral puck charges it your color
+- Charged puck potted → +1 for its charge owner, shooter keeps the turn ("RELAY ×n" streaks)
+- Striker potted → +1 for the opponent, turn passes (POISON)
+- Uncharged drifter potted → +1 for the shooter
+- Clock at 0:00 (or board empty) → highest score wins; tie with pucks left → sudden death, next pot decides (a poison in sudden death loses instantly)
+- **Hot ports:** only 1 of the 4 corner ports is live (glowing) at a time, rotating clockwise every 20s. Sinking any puck into a dead port returns it to center and passes your turn — no score, no poison.
+
+## Tuning knobs
+
+- Friction: `0.985` in `engine.js` (stepGame)
+- Max flick power: `S * 0.036` (RelayGame input + AI)
+- Pocket capture radius: `pocketR * 0.72`
+- Match length: `MATCH_SECONDS` in `engine.js`
+- AI aggression: alignment threshold `dot > 0.72` in `aiChooseShot`
+- Hot ports: only 1 of the 4 corner ports is "live" at once, rotating clockwise every `PORT_ROTATE_SECONDS` (20s, `engine.js`) through `PORT_PATTERNS`. Potting into a dead port returns that puck to center and ends your turn (no score) — see `getLivePorts`/`portRotateInfo`.
