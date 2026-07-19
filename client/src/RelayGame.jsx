@@ -44,11 +44,23 @@ function makeSfx() {
 // mode: 'ai' | 'pvp' | 'online'
 // online: { playerIndex, startAt } (socket via getSocket())
 export default function RelayGame({ mode, online, onExit }) {
-  const [w, setW] = useState(window.innerWidth);
+  const rootRef = useRef(null);
+  const [w, setW] = useState(() => document.documentElement.clientWidth || window.innerWidth);
   useEffect(() => {
-    const f = () => setW(window.innerWidth);
-    window.addEventListener("resize", f);
-    return () => window.removeEventListener("resize", f);
+    const measure = () => {
+      const el = rootRef.current;
+      setW(el ? el.clientWidth : document.documentElement.clientWidth || window.innerWidth);
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    if (ro && rootRef.current) ro.observe(rootRef.current);
+    window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("orientationchange", measure);
+    };
   }, []);
   const size = Math.min(440, w - 20);
 
@@ -568,23 +580,29 @@ export default function RelayGame({ mode, online, onExit }) {
   };
 
   return (
-    <div style={{ minHeight: "100vh", background: `linear-gradient(180deg, ${C.board}, ${C.boardDeep})`, color: C.text, fontFamily: "'Space Mono', monospace", display: "flex", flexDirection: "column", alignItems: "center", paddingBottom: 40, userSelect: "none", WebkitUserSelect: "none" }}>
+    <div ref={rootRef} style={{ minHeight: "100vh", width: "100%", background: `linear-gradient(180deg, ${C.board}, ${C.boardDeep})`, color: C.text, fontFamily: "'Space Mono', monospace", display: "flex", flexDirection: "column", alignItems: "center", paddingBottom: 40, userSelect: "none", WebkitUserSelect: "none", boxSizing: "border-box" }}>
       <style>{`
         @keyframes rlIn { from{opacity:0; transform:scale(.85)} to{opacity:1; transform:scale(1)} }
         @keyframes rlPulse { 0%,100%{opacity:.55} 50%{opacity:1} }
         @keyframes rlCall { 0%{opacity:0; transform:translateX(-50%) scale(.7)} 15%{opacity:1; transform:translateX(-50%) scale(1.08)} 30%{transform:translateX(-50%) scale(1)} 80%{opacity:1} 100%{opacity:0; transform:translateX(-50%) translateY(-12px)} }
-        @keyframes rlEmote { 0%{opacity:0; transform:translateY(10px) scale(.6)} 20%{opacity:1; transform:translateY(0) scale(1.1)} 35%{transform:scale(1)} 80%{opacity:1} 100%{opacity:0; transform:translateY(-20px)} }
+        @keyframes rlEmote {
+          0%{opacity:0; transform:translateX(-50%) translateY(8px) scale(.6)}
+          20%{opacity:1; transform:translateX(-50%) translateY(0) scale(1.15)}
+          35%{transform:translateX(-50%) translateY(0) scale(1)}
+          75%{opacity:1; transform:translateX(-50%) translateY(-3px) scale(1)}
+          100%{opacity:0; transform:translateX(-50%) translateY(-10px) scale(.92)}
+        }
         @media (prefers-reduced-motion: reduce){ *{animation:none !important} }
       `}</style>
 
       {/* HUD */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", maxWidth: size, padding: "14px 4px 8px", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", maxWidth: size, padding: "30px 4px 8px", gap: 8 }}>
         {[0, 1].map((p) => (
-          <div key={p} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "8px 14px", borderRadius: 10, background: C.panel, border: `1px solid ${turn === p && winner === null ? PCOL[p] : C.line}`, boxShadow: turn === p && winner === null ? `0 0 14px ${PCOL[p]}44` : "none", minWidth: 88, position: "relative" }}>
+          <div key={p} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "8px 14px", borderRadius: 10, background: C.panel, border: `1px solid ${turn === p && winner === null ? PCOL[p] : C.line}`, boxShadow: turn === p && winner === null ? `0 0 14px ${PCOL[p]}44` : "none", minWidth: 88, position: "relative", overflow: "visible" }}>
             <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 8, letterSpacing: 1.5, color: PCOL[p], whiteSpace: "nowrap" }}>{nameFor(p)}</div>
             <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 24, color: PCOL[p] }}>{scores[p]}</div>
             {emoteFx && emoteFx.side === p && (
-              <div key={emoteFx.key} style={{ position: "absolute", top: -26, fontSize: 24, animation: "rlEmote 1.8s ease-out forwards" }}>{emoteFx.emote}</div>
+              <div key={emoteFx.key} style={{ position: "absolute", top: -18, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
             )}
           </div>
         ))}
