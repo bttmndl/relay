@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 import RelayGame from "./RelayGame.jsx";
 import { getSocket } from "./net.js";
-
-const C = {
-  board: "#0B1F16", boardDeep: "#06110C", panel: "#10221A", line: "#1E3A2C",
-  copper: "#C97F3D", volt: "#7CFF4A", amp: "#FFA02E", hot: "#F4FFF0",
-  text: "#E8F5EC", dim: "#7C948A",
-};
+import { THEMES, getTheme, loadStoredThemeId, storeThemeId } from "./themes.js";
 
 export default function App() {
   const [screen, setScreen] = useState("menu"); // menu | online | game
@@ -16,6 +11,14 @@ export default function App() {
   const [roomCode, setRoomCode] = useState(null); // code I host
   const [joinInput, setJoinInput] = useState("");
   const [connected, setConnected] = useState(false);
+  const [themeId, setThemeId] = useState(loadStoredThemeId);
+  const theme = getTheme(themeId);
+  const C = {
+    board: theme.ui.board, boardDeep: theme.ui.boardDeep, panel: theme.ui.panel, line: theme.ui.line,
+    copper: theme.accent, volt: theme.players[0], amp: theme.players[1], hot: theme.ui.hot,
+    text: theme.ui.text, dim: theme.ui.dim,
+  };
+  const chooseTheme = (id) => { setThemeId(id); storeThemeId(id); };
 
   // socket lifecycle — App owns matchmaking events
   useEffect(() => {
@@ -100,6 +103,7 @@ export default function App() {
         mode={mode}
         online={mode === "online" ? session : null}
         onExit={exitGame}
+        theme={theme}
       />
     );
   }
@@ -168,12 +172,48 @@ export default function App() {
         <span style={{ color: C.volt }}>RE</span><span style={{ color: C.amp }}>LAY</span>
       </h1>
       <p style={{ color: C.dim, fontSize: 13, maxWidth: 340, lineHeight: 1.7, margin: "6px 0 26px" }}>
-        All 16 pucks are neutral. The puck you flick is your <b style={{ color: C.hot }}>striker</b> — everything it touches gets charged your color. Pot a charged puck = point + <b style={{ color: C.volt }}>shoot again</b>. Sink your striker = <b style={{ color: "#FF6A6A" }}>point to your rival</b>.
-        <br /><b style={{ color: C.text }}>3:00 clock. Most banked wins.</b>
+        16 pucks are neutral, plus one <b style={{ color: "#D6203F" }}>queen</b> at the center. The puck you flick is your <b style={{ color: C.hot }}>striker</b> — everything it touches gets charged your color. Pot a charged puck = point + <b style={{ color: C.volt }}>shoot again</b>. Sink your striker = <b style={{ color: "#FF6A6A" }}>point to your rival</b>. Pot the queen and cover it with one of your own before your turn ends, or it returns to center.
+        <br /><b style={{ color: C.text }}>Board empty, most banked wins.</b>
       </p>
       <button style={btn("#0E2415", C.volt)} onClick={() => setScreen("online")}>PLAY ONLINE</button>
       <button style={btn("#241708", C.amp)} onClick={() => startLocal("ai")}>PLAY VS AI</button>
       <button style={{ ...btn(C.panel, C.text), boxShadow: "none", border: `1px solid ${C.line}` }} onClick={() => startLocal("pvp")}>PASS &amp; PLAY</button>
+
+      <div style={{ marginTop: 28, width: "100%", maxWidth: 360 }}>
+        <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 10, letterSpacing: 3, color: C.dim, marginBottom: 10 }}>
+          BOARD THEME
+        </div>
+        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10 }}>
+          {THEMES.map((t) => {
+            const selected = t.id === themeId;
+            return (
+              <button
+                key={t.id}
+                onClick={() => chooseTheme(t.id)}
+                title={t.tagline}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
+                  width: 90, padding: "10px 6px", borderRadius: 10, cursor: "pointer",
+                  background: t.ui.panel, border: `2px solid ${selected ? t.accent : t.ui.line}`,
+                  boxShadow: selected ? `0 0 14px ${t.accent}66` : "none",
+                }}
+              >
+                <div style={{ display: "flex", gap: 4 }}>
+                  {t.swatch.map((sw, i) => (
+                    <span key={i} style={{
+                      width: 14, height: 14, borderRadius: "50%", background: sw,
+                      border: `1px solid ${t.ui.line}`, boxShadow: i > 0 ? `0 0 5px ${sw}88` : "none",
+                    }} />
+                  ))}
+                </div>
+                <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 8, letterSpacing: 1, color: t.ui.text, textAlign: "center", lineHeight: 1.3 }}>
+                  {t.name}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }

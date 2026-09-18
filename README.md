@@ -2,7 +2,7 @@
 
 *Nothing is yours until it moves.*
 
-A flick game with no clock. All 16 pucks are neutral — the puck you flick becomes your **striker**, and everything it touches gets charged your color. Pot a charged puck for a point and shoot again. Sink your striker and the point goes to your rival (**poison**). Play runs until every puck is off the board; whoever banked the most wins.
+A flick game with no match clock, but each turn is on its own shot clock. 16 pucks are neutral, plus one special **queen** at the center — the puck you flick becomes your **striker**, and everything it touches gets charged your color. Pot a charged puck for a point and shoot again. Sink your striker and the point goes to your rival (**poison**). Pot the queen and you must cover it — pot one of your own before your turn ends — or it returns to center unclaimed. Play runs until every puck is off the board; whoever banked the most wins.
 
 ## Stack
 
@@ -75,14 +75,16 @@ relay/
 
 ## Game rules (v1)
 
-- 16 neutral pucks, 4 corner ports, no match clock — play continues until the board is empty
+- 16 neutral pucks + 1 queen, 4 corner ports, no match clock — play continues until the board is empty
+- **Shot clock:** each player has `TURN_SECONDS` (20s) to take their shot, shown as a draining border around their score chip. It resets fresh after every resolved shot — a RELAY streak gets a new window each time, not just a turn change. Run out the clock and the turn passes with no score, same as any other foul (a pending queen goes uncovered too)
 - On your turn flick **any** puck — it becomes your striker
 - Chain charging: striker or any charged puck touching a neutral puck charges it your color
 - Charged puck potted → +1 for its charge owner, shooter keeps the turn ("RELAY ×n" streaks)
 - Striker potted → +1 for the opponent, turn passes (POISON)
 - Uncharged drifter potted → +1 for the shooter
+- **The queen:** a special center puck (like carrom's red goti). Potting it banks no points by itself and keeps your turn — you then must pot one of your own regular pucks before the turn passes to "cover" it and bank the `QUEEN_BONUS` (2 points). Fail to cover it before the turn ends and it returns, uncovered, to the center
 - Board empty → highest score wins; equal scores → draw
-- **Hot ports:** only 1 of the 4 corner ports is live (glowing) at a time, rotating clockwise every 20s. Sinking any puck into a dead port returns it to center and passes your turn — no score, no poison.
+- **Hot ports:** only 1 of the 4 corner ports is live (glowing) at a time — whichever is currently the *hardest* to pot into, given the live puck layout. It stays live for as long as it holds that title; the moment another pocket overtakes it, a 5s warning countdown appears before it actually shifts. Sinking any puck into a dead port returns it to center and passes your turn — no score, no poison.
 
 ## Tuning knobs
 
@@ -90,4 +92,5 @@ relay/
 - Max flick power: `S * 0.036` (RelayGame input + AI)
 - Pocket capture radius: `pocketR * 0.72`
 - AI aggression: alignment threshold `dot > 0.72` in `aiChooseShot`
-- Hot ports: only 1 of the 4 corner ports is "live" at once, rotating clockwise every `PORT_ROTATE_SECONDS` (20s, `engine.js`) through `PORT_PATTERNS`. Potting into a dead port returns that puck to center and ends your turn (no score) — see `getLivePorts`/`portRotateInfo`.
+- Shot clock: `TURN_SECONDS` (20s, `engine.js`) — resets on every `finishShot`, enforced by `turnTimeoutPass` when it runs out mid-`stepGame`
+- Hot ports: the live pocket is whichever is currently hardest to pot into (`hardestPocket`/`pocketEase` in `engine.js`, scored the same way as the AI's own shot-quality heuristic). A challenger must hold that title for `PORT_SHIFT_WARNING_SECONDS` (5s) before the port actually shifts to it. Potting into a dead port returns that puck to center and ends your turn (no score) — see `getLivePorts`/`portRotateInfo`.

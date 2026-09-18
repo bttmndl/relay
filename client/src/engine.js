@@ -13,21 +13,94 @@ export const COLORS = {
 export const PCOL = [COLORS.volt, COLORS.amp];
 export const PNAME = ["VOLT", "AMP"];
 
+// ---------------- the queen ----------------
+// one special center puck (like carrom's red goti). Potting it alone banks
+// no points — the shooter must then pot one of their own regular pucks in
+// the same unbroken turn to "cover" it and claim the bonus. If the turn
+// passes before that happens, the queen returns uncovered to the center.
+export const QUEEN_BONUS = 2;
+
+// ---------------- shot clock ----------------
+// each player gets a fixed window to take their shot. It resets after
+// every resolved shot (so a RELAY streak gets a fresh window each time,
+// not just a change of turn) and runs out only while waiting to aim.
+// Running out passes the turn with no score, like any other foul.
+export const TURN_SECONDS = 20;
+const TURN_FRAMES = TURN_SECONDS * 60;
+
 // ---------------- hot ports ----------------
 // pockets are indexed [TL, TR, BL, BR]. Only one is "live" (powered) at a
-// time; it rotates clockwise on a fixed clock so it's identical on every client.
-export const PORT_ROTATE_SECONDS = 20;
-const PORT_ROTATE_FRAMES = PORT_ROTATE_SECONDS * 60;
-const PORT_PATTERNS = [[0], [1], [3], [2]];
+// time — but instead of a fixed rotation, it's whichever pocket is
+// currently the HARDEST to pot into given the live puck layout. It stays
+// live for as long as it holds that title. The moment another pocket
+// overtakes it, a fixed warning window opens (PORT_SHIFT_WARNING_SECONDS);
+// if the challenger is still hardest when that runs out, the port shifts
+// to it. Purely a function of game state, so it stays identical on both
+// clients without needing its own random or wall-clock input.
+export const PORT_SHIFT_WARNING_SECONDS = 5;
+const PORT_SHIFT_WARNING_FRAMES = PORT_SHIFT_WARNING_SECONDS * 60;
+
+// how good is the best available shot at pocket `pi` right now? Mirrors the
+// AI's own (source puck, target puck) alignment heuristic, but scoped to a
+// single pocket and with a looser gate so every pocket gets a real number
+// to compare rather than tying at zero. Higher = easier; the live pocket
+// is whichever comes out LOWEST.
+function pocketEase(g, pi) {
+  const pk = g.pockets[pi];
+  const live = g.pucks.filter((p) => p.alive && !p.sink);
+  let best = 0;
+  for (let i = 0; i < live.length; i++) {
+    for (let j = 0; j < live.length; j++) {
+      if (i === j) continue;
+      const s = live[i], t = live[j];
+      const stx = t.x - s.x, sty = t.y - s.y;
+      const std = Math.hypot(stx, sty);
+      if (std < g.R * 2.2) continue;
+      const tpx = pk.x - t.x, tpy = pk.y - t.y;
+      const tpd = Math.hypot(tpx, tpy);
+      const dot = (stx * tpx + sty * tpy) / (std * tpd || 1);
+      if (dot <= 0) continue;
+      const ease = dot * 2.2 - std / g.S - tpd / (g.S * 2);
+      if (ease > best) best = ease;
+    }
+  }
+  return best;
+}
+
+function hardestPocket(g) {
+  let idx = 0, min = Infinity;
+  for (let pi = 0; pi < g.pockets.length; pi++) {
+    const ease = pocketEase(g, pi);
+    if (ease < min) { min = ease; idx = pi; }
+  }
+  return idx;
+}
+
+// re-evaluated every frame (cheap: pockets × pucks²) so it reacts as soon
+// as a shot resettles the board, whether or not one is currently in flight
+function updateLivePort(g) {
+  const hardest = hardestPocket(g);
+  if (hardest === g.livePort) {
+    g.portShift = null;
+    return;
+  }
+  if (!g.portShift || g.portShift.target !== hardest) {
+    g.portShift = { target: hardest, framesLeft: PORT_SHIFT_WARNING_FRAMES };
+  } else if (--g.portShift.framesLeft <= 0) {
+    g.livePort = hardest;
+    g.portShift = null;
+  }
+}
 
 export function getLivePorts(g) {
-  const stage = Math.floor(g.frame / PORT_ROTATE_FRAMES) % PORT_PATTERNS.length;
-  return PORT_PATTERNS[stage];
+  return [g.livePort];
 }
 
 export function portRotateInfo(g) {
-  const into = g.frame % PORT_ROTATE_FRAMES;
-  return { live: getLivePorts(g), framesToNext: PORT_ROTATE_FRAMES - into };
+  return {
+    live: getLivePorts(g),
+    pending: g.portShift ? { target: g.portShift.target, framesLeft: g.portShift.framesLeft } : null,
+  };
 }
 
 export function createGame(size) {
@@ -44,8 +117,11 @@ export function createGame(size) {
     const a = (i / 10) * Math.PI * 2 + Math.PI / 10;
     pucks.push(mkPuck(cx + Math.cos(a) * R * 4.4, cy + Math.sin(a) * R * 4.4));
   }
+  const queen = mkPuck(cx, cy);
+  queen.isQueen = true;
+  pucks.push(queen);
   const po = pad + R * 1.15;
-  return {
+  const g = {
     S, R, pad, cx, cy, pucks,
     pockets: [
       { x: po, y: po }, { x: S - po, y: po },
@@ -60,15 +136,21 @@ export function createGame(size) {
     potsThisShot: 0,
     poisonThisShot: false,
     deadPortThisShot: false,
+    queenPending: null, // player index who potted the queen, awaiting a cover
     streak: 0,
     settleFrames: 0,
     resolveTime: 0,
     frame: 0,
+    livePort: 0,
+    portShift: null,
+    turnTimeLeft: TURN_FRAMES,
   };
+  g.livePort = hardestPocket(g);
+  return g;
 }
 
 function mkPuck(x, y) {
-  return { x, y, vx: 0, vy: 0, charge: null, striker: false, alive: true, sink: null };
+  return { x, y, vx: 0, vy: 0, charge: null, striker: false, alive: true, sink: null, isQueen: false };
 }
 
 export function launch(g, idx, ang, v, ev) {
@@ -99,6 +181,15 @@ export function stepGame(g, ev) {
     p.sink.s *= 0.85;
     if (p.sink.s < 0.06) { p.alive = false; p.sink = null; }
   });
+
+  // re-rank pocket difficulty continuously — including between shots, so a
+  // long think doesn't stall the warning countdown
+  if (g.winner === null) updateLivePort(g);
+
+  // shot clock only runs while waiting to aim — frozen mid-shot and once the match ends
+  if (g.phase === "aim" && g.winner === null && --g.turnTimeLeft <= 0) {
+    turnTimeoutPass(g, ev);
+  }
 
   if (g.phase !== "resolve") return;
 
@@ -163,12 +254,23 @@ export function stepGame(g, ev) {
           const opp = 1 - g.turn;
           g.scores[opp]++;
           ev.push({ t: "poison", player: opp });
+        } else if (p.isQueen) {
+          // queen potted: no score yet — must be covered before the turn ends
+          p.sink = { px: pk.x, py: pk.y, s: 1 };
+          g.potsThisShot++;
+          g.queenPending = g.turn;
+          ev.push({ t: "queenPot", player: g.turn });
         } else {
           p.sink = { px: pk.x, py: pk.y, s: 1 };
           const scorer = p.charge !== null ? p.charge : g.turn;
           g.potsThisShot++;
           g.scores[scorer]++;
           ev.push({ t: "pot", player: scorer });
+          if (g.queenPending !== null) {
+            g.scores[g.queenPending] += QUEEN_BONUS;
+            ev.push({ t: "queenCover", player: g.queenPending });
+            g.queenPending = null;
+          }
         }
         break;
       }
@@ -196,6 +298,22 @@ function endMatch(g, winner, ev) {
   ev.push({ t: "end", winner });
 }
 
+// queen potted but not covered before the turn ends — it returns uncovered
+function returnQueenIfPending(g, ev) {
+  if (g.queenPending === null) return;
+  const queen = g.pucks.find((p) => p.isQueen);
+  if (queen) {
+    queen.alive = true;
+    queen.sink = null;
+    queen.x = g.cx; queen.y = g.cy;
+    queen.vx = 0; queen.vy = 0;
+    queen.striker = false;
+    queen.charge = null;
+  }
+  g.queenPending = null;
+  ev.push({ t: "queenReturn" });
+}
+
 function finishShot(g, ev) {
   g.pucks.forEach((p) => {
     if (!p.alive || p.sink) return;
@@ -208,6 +326,9 @@ function finishShot(g, ev) {
     ev.push({ t: "shotDone", shooter });
     return;
   }
+
+  const keepTurn = g.potsThisShot > 0 && !g.poisonThisShot && !g.deadPortThisShot;
+  if (!keepTurn) returnQueenIfPending(g, ev);
 
   const remaining = g.pucks.filter((p) => p.alive && !p.sink).length;
   if (remaining === 0) {
@@ -224,7 +345,6 @@ function finishShot(g, ev) {
     }
   }
 
-  const keepTurn = g.potsThisShot > 0 && !g.poisonThisShot && !g.deadPortThisShot;
   if (keepTurn) {
     g.streak++;
     if (g.streak >= 2) ev.push({ t: "streak", n: g.streak, player: g.turn });
@@ -234,7 +354,19 @@ function finishShot(g, ev) {
     ev.push({ t: "turn", turn: g.turn });
   }
   g.phase = "aim";
+  g.turnTimeLeft = TURN_FRAMES;
   ev.push({ t: "shotDone", shooter });
+}
+
+// no shot taken before the shot clock ran out — turn passes with no score,
+// same as any other foul (and the queen, if pending, goes uncovered too)
+function turnTimeoutPass(g, ev) {
+  returnQueenIfPending(g, ev);
+  g.streak = 0;
+  g.turn = 1 - g.turn;
+  g.turnTimeLeft = TURN_FRAMES;
+  ev.push({ t: "turnTimeout" });
+  ev.push({ t: "turn", turn: g.turn });
 }
 
 // ---------------- online sync ----------------
@@ -246,6 +378,10 @@ export function serialize(g) {
     winner: g.winner,
     streak: g.streak,
     frame: g.frame,
+    queenPending: g.queenPending,
+    livePort: g.livePort,
+    portShift: g.portShift,
+    turnTimeLeft: g.turnTimeLeft,
   };
 }
 
@@ -263,6 +399,10 @@ export function applySync(g, snap) {
   g.winner = snap.winner;
   g.streak = snap.streak;
   g.frame = snap.frame;
+  g.queenPending = snap.queenPending ?? null;
+  g.livePort = snap.livePort ?? g.livePort;
+  g.portShift = snap.portShift ?? null;
+  g.turnTimeLeft = snap.turnTimeLeft ?? TURN_FRAMES;
   g.phase = snap.winner !== null ? "done" : "aim";
 }
 
