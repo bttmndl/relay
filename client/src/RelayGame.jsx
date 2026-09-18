@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createGame, launch, stepGame, serialize, applySync, aiChooseShot,
-  getLivePorts, portRotateInfo, MATCH_SECONDS, PCOL, PNAME,
+  getLivePorts, portRotateInfo, PCOL, PNAME,
 } from "./engine.js";
 import { getSocket } from "./net.js";
 
@@ -36,7 +36,6 @@ function makeSfx() {
     pot: () => { blip(520, 780, 0.12, "sine", 0.1); setTimeout(() => blip(780, 1170, 0.16, "sine", 0.09), 70); },
     poison: () => blip(300, 70, 0.5, "sawtooth", 0.12),
     reject: () => blip(240, 60, 0.22, "square", 0.09),
-    tick: () => blip(1000, 1000, 0.03, "sine", 0.05),
     win: () => { blip(330, 660, 0.3, "sine", 0.1); setTimeout(() => blip(495, 990, 0.4, "sine", 0.1), 150); },
   };
 }
@@ -66,8 +65,6 @@ export default function RelayGame({ mode, online, onExit }) {
 
   const [turn, setTurn] = useState(0);
   const [scores, setScores] = useState([0, 0]);
-  const [timeLeft, setTimeLeft] = useState(MATCH_SECONDS);
-  const [sudden, setSudden] = useState(false);
   const [winner, setWinner] = useState(null);
   const [callout, setCallout] = useState(null);
   const [waitingStart, setWaitingStart] = useState(mode === "online");
@@ -82,7 +79,6 @@ export default function RelayGame({ mode, online, onExit }) {
   const arcs = useRef([]);
   const rejects = useRef([]);
   const drag = useRef(null);
-  const timerId = useRef(null);
   const me = mode === "online" ? online.playerIndex : null;
 
   const say = (text, col, ms = 1400) => {
@@ -96,33 +92,23 @@ export default function RelayGame({ mode, online, onExit }) {
     if (!sfx.current) sfx.current = makeSfx();
     arcs.current = [];
     rejects.current = [];
-    setScores([0, 0]); setTurn(0); setWinner(null); setSudden(false);
-    setTimeLeft(MATCH_SECONDS);
+    setScores([0, 0]); setTurn(0); setWinner(null);
 
-    const startClock = () => {
+    const beginMatch = () => {
       setWaitingStart(false);
       say(
         mode === "online"
           ? me === 0 ? "YOU ARE VOLT — you shoot first" : "YOU ARE AMP — Volt shoots first"
           : "VOLT first — everything you touch becomes yours",
         PCOL[mode === "online" ? me : 0], 2400);
-      timerId.current = setInterval(() => {
-        const g = G.current;
-        if (!g || g.winner !== null || g.sudden) return;
-        g.timeLeft = Math.max(0, g.timeLeft - 1);
-        setTimeLeft(g.timeLeft);
-        if (g.timeLeft <= 10 && g.timeLeft > 0) sfx.current?.tick();
-        if (g.timeLeft === 0) g.timeUp = true;
-      }, 1000);
     };
 
     if (mode === "online") {
       const delay = Math.max(0, online.startAt - Date.now());
-      const t = setTimeout(startClock, delay);
-      return () => { clearTimeout(t); clearInterval(timerId.current); };
+      const t = setTimeout(beginMatch, delay);
+      return () => clearTimeout(t);
     }
-    startClock();
-    return () => clearInterval(timerId.current);
+    beginMatch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -142,7 +128,6 @@ export default function RelayGame({ mode, online, onExit }) {
       if (!g) return;
       applySync(g, snap);
       setScores([...g.scores]); setTurn(g.turn);
-      setSudden(g.sudden); setTimeLeft(g.timeLeft);
       if (g.winner !== null && winner === null) setWinner(g.winner);
     };
     const onLeft = () => { setOppLeft(true); setWinner(me); sfx.current?.win(); };
@@ -185,11 +170,9 @@ export default function RelayGame({ mode, online, onExit }) {
       }
       else if (e.t === "streak") say(`RELAY ×${e.n}`, PCOL[e.player], 1200);
       else if (e.t === "turn") setTurn(e.turn);
-      else if (e.t === "sudden") { setSudden(true); say("SUDDEN DEATH — NEXT POT WINS", C.hot, 2200); }
       else if (e.t === "end") { sfx.current?.win(); setTimeout(() => setWinner(e.winner), 600); }
       else if (e.t === "shotDone") {
         if (mode === "online" && e.shooter === me) {
-          g.timeLeft = timeLeftRefSafe(g);
           getSocket().emit("syncState", serialize(g));
         }
         if (mode === "ai" && g.phase === "aim" && g.turn === 1 && g.winner === null) {
@@ -207,7 +190,6 @@ export default function RelayGame({ mode, online, onExit }) {
       }
     });
   };
-  const timeLeftRefSafe = (g) => g.timeLeft;
 
   // ---------------- fixed-timestep loop + render ----------------
   useEffect(() => {
@@ -551,8 +533,6 @@ export default function RelayGame({ mode, online, onExit }) {
   };
 
   // ---------------- ui bits ----------------
-  const mm = String(Math.floor(timeLeft / 60));
-  const ss = String(timeLeft % 60).padStart(2, "0");
   const btn = (bg, col) => ({
     fontFamily: "'Audiowide', sans-serif", fontSize: 14, letterSpacing: 2,
     color: col, background: bg, border: `2px solid ${col}`, borderRadius: 10,
@@ -608,10 +588,6 @@ export default function RelayGame({ mode, online, onExit }) {
         ))}
       </div>
       <div style={{ position: "absolute", top: 18, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 24, letterSpacing: 2, color: sudden ? C.hot : timeLeft <= 30 ? "#FF6A6A" : C.text, animation: timeLeft <= 30 && !sudden && winner === null ? "rlPulse 1s infinite" : "none" }}>
-          {sudden ? "⚡" : `${mm}:${ss}`}
-        </div>
-        <div style={{ fontSize: 8, letterSpacing: 2, color: C.dim }}>{sudden ? "NEXT POT WINS" : "MATCH CLOCK"}</div>
         {winner === null && !waitingStart && (
           <div style={{ fontSize: 8, letterSpacing: 1, color: portsIn <= 3 ? "#FF6A6A" : C.copper, marginTop: 2, animation: portsIn <= 3 ? "rlPulse 0.6s infinite" : "none" }}>
             PORTS SHIFT {portsIn}s

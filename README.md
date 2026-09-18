@@ -2,7 +2,7 @@
 
 *Nothing is yours until it moves.*
 
-A 3-minute flick game. All 16 pucks are neutral — the puck you flick becomes your **striker**, and everything it touches gets charged your color. Pot a charged puck for a point and shoot again. Sink your striker and the point goes to your rival (**poison**). Most banked when the clock hits 0:00 wins; ties go to sudden death — next pot wins.
+A flick game with no clock. All 16 pucks are neutral — the puck you flick becomes your **striker**, and everything it touches gets charged your color. Pot a charged puck for a point and shoot again. Sink your striker and the point goes to your rival (**poison**). Play runs until every puck is off the board; whoever banked the most wins.
 
 ## Stack
 
@@ -75,13 +75,13 @@ relay/
 
 ## Game rules (v1)
 
-- 16 neutral pucks, 4 corner ports, 3:00 match clock (runs through everything)
+- 16 neutral pucks, 4 corner ports, no match clock — play continues until the board is empty
 - On your turn flick **any** puck — it becomes your striker
 - Chain charging: striker or any charged puck touching a neutral puck charges it your color
 - Charged puck potted → +1 for its charge owner, shooter keeps the turn ("RELAY ×n" streaks)
 - Striker potted → +1 for the opponent, turn passes (POISON)
 - Uncharged drifter potted → +1 for the shooter
-- Clock at 0:00 (or board empty) → highest score wins; tie with pucks left → sudden death, next pot decides (a poison in sudden death loses instantly)
+- Board empty → highest score wins; equal scores → draw
 - **Hot ports:** only 1 of the 4 corner ports is live (glowing) at a time, rotating clockwise every 20s. Sinking any puck into a dead port returns it to center and passes your turn — no score, no poison.
 
 ## Tuning knobs
@@ -89,6 +89,5 @@ relay/
 - Friction: `0.985` in `engine.js` (stepGame)
 - Max flick power: `S * 0.036` (RelayGame input + AI)
 - Pocket capture radius: `pocketR * 0.72`
-- Match length: `MATCH_SECONDS` in `engine.js`
 - AI aggression: alignment threshold `dot > 0.72` in `aiChooseShot`
 - Hot ports: only 1 of the 4 corner ports is "live" at once, rotating clockwise every `PORT_ROTATE_SECONDS` (20s, `engine.js`) through `PORT_PATTERNS`. Potting into a dead port returns that puck to center and ends your turn (no score) — see `getLivePorts`/`portRotateInfo`.

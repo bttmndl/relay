@@ -5,7 +5,6 @@
 // snapshot (serialize/applySync) corrects any float drift.
 // ==================================================================
 
-export const MATCH_SECONDS = 180;
 export const COLORS = {
   volt: "#7CFF4A",
   amp: "#FFA02E",
@@ -56,9 +55,6 @@ export function createGame(size) {
     phase: "aim", // aim | resolve | done
     turn: 0,
     scores: [0, 0],
-    timeLeft: MATCH_SECONDS,
-    timeUp: false,
-    sudden: false,
     winner: null, // 0 | 1 | 'draw'
     strikerIdx: -1,
     potsThisShot: 0,
@@ -167,14 +163,12 @@ export function stepGame(g, ev) {
           const opp = 1 - g.turn;
           g.scores[opp]++;
           ev.push({ t: "poison", player: opp });
-          if (g.sudden) endMatch(g, opp, ev);
         } else {
           p.sink = { px: pk.x, py: pk.y, s: 1 };
           const scorer = p.charge !== null ? p.charge : g.turn;
           g.potsThisShot++;
           g.scores[scorer]++;
           ev.push({ t: "pot", player: scorer });
-          if (g.sudden) endMatch(g, scorer, ev);
         }
         break;
       }
@@ -216,11 +210,8 @@ function finishShot(g, ev) {
   }
 
   const remaining = g.pucks.filter((p) => p.alive && !p.sink).length;
-  if ((g.timeUp || remaining === 0) && !g.sudden) {
-    if (g.scores[0] === g.scores[1] && remaining > 0) {
-      g.sudden = true;
-      ev.push({ t: "sudden" });
-    } else if (g.scores[0] === g.scores[1]) {
+  if (remaining === 0) {
+    if (g.scores[0] === g.scores[1]) {
       g.winner = "draw";
       g.phase = "done";
       ev.push({ t: "end", winner: "draw" });
@@ -252,9 +243,7 @@ export function serialize(g) {
     pucks: g.pucks.map((p) => ({ x: p.x, y: p.y, alive: p.alive })),
     scores: [...g.scores],
     turn: g.turn,
-    sudden: g.sudden,
     winner: g.winner,
-    timeLeft: g.timeLeft,
     streak: g.streak,
     frame: g.frame,
   };
@@ -271,9 +260,7 @@ export function applySync(g, snap) {
   });
   g.scores = [...snap.scores];
   g.turn = snap.turn;
-  g.sudden = snap.sudden;
   g.winner = snap.winner;
-  g.timeLeft = Math.min(g.timeLeft, snap.timeLeft);
   g.streak = snap.streak;
   g.frame = snap.frame;
   g.phase = snap.winner !== null ? "done" : "aim";
