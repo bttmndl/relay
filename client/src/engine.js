@@ -13,12 +13,13 @@ export const COLORS = {
 export const PCOL = [COLORS.volt, COLORS.amp];
 export const PNAME = ["VOLT", "AMP"];
 
-// ---------------- the queen ----------------
-// one special center puck (like carrom's red goti). Potting it alone banks
-// no points — the shooter must then pot one of their own regular pucks in
-// the same unbroken turn to "cover" it and claim the bonus. If the turn
-// passes before that happens, the queen returns uncovered to the center.
-export const QUEEN_BONUS = 2;
+// ---------------- scoring ----------------
+// a regular puck is worth 1 point. The queen — the special center puck —
+// is worth QUEEN_POINTS on its own, no extra condition. Potting 3 (or 6, 9…)
+// pucks in a row within one unbroken turn banks an extra streak bonus.
+export const QUEEN_POINTS = 5;
+export const STREAK_BONUS_EVERY = 3;
+export const STREAK_BONUS_POINTS = 1;
 
 // ---------------- shot clock ----------------
 // each player gets a fixed window to take their shot. It resets after
@@ -76,6 +77,41 @@ function hardestPocket(g) {
   return idx;
 }
 
+// where's the single hardest open spot on the board to pot INTO, given the
+// current layout and live pocket? Used once, at setup, to place the queen.
+// Scans a grid of candidate points (skipping anything that would overlap a
+// puck, a pocket, or a wall) and scores each one exactly like pocketEase
+// does — the best shot any live puck could currently take at a target
+// sitting there. Lowest wins.
+function hardestSpawnSpot(g) {
+  const pk = g.pockets[g.livePort];
+  const sources = g.pucks.filter((p) => p.alive && !p.sink && !p.isQueen);
+  const lo = g.pad + g.R * 1.5, hi = g.S - g.pad - g.R * 1.5;
+  const step = g.R * 2.4;
+  let best = null;
+  for (let x = lo; x <= hi; x += step) {
+    for (let y = lo; y <= hi; y += step) {
+      let blocked = g.pockets.some((p) => Math.hypot(x - p.x, y - p.y) < g.pocketR * 1.6);
+      if (!blocked) blocked = sources.some((p) => Math.hypot(x - p.x, y - p.y) < g.R * 2.3);
+      if (blocked) continue;
+      let ease = 0;
+      sources.forEach((s) => {
+        const stx = x - s.x, sty = y - s.y;
+        const std = Math.hypot(stx, sty);
+        if (std < g.R * 2.2) return;
+        const tpx = pk.x - x, tpy = pk.y - y;
+        const tpd = Math.hypot(tpx, tpy);
+        const dot = (stx * tpx + sty * tpy) / (std * tpd || 1);
+        if (dot <= 0) return;
+        const e = dot * 2.2 - std / g.S - tpd / (g.S * 2);
+        if (e > ease) ease = e;
+      });
+      if (!best || ease < best.ease) best = { x, y, ease };
+    }
+  }
+  return best ? { x: best.x, y: best.y } : { x: g.cx, y: g.cy };
+}
+
 // re-evaluated every frame (cheap: pockets × pucks²) so it reacts as soon
 // as a shot resettles the board, whether or not one is currently in flight
 function updateLivePort(g) {
@@ -117,9 +153,6 @@ export function createGame(size) {
     const a = (i / 10) * Math.PI * 2 + Math.PI / 10;
     pucks.push(mkPuck(cx + Math.cos(a) * R * 4.4, cy + Math.sin(a) * R * 4.4));
   }
-  const queen = mkPuck(cx, cy);
-  queen.isQueen = true;
-  pucks.push(queen);
   const po = pad + R * 1.15;
   const g = {
     S, R, pad, cx, cy, pucks,
@@ -136,7 +169,6 @@ export function createGame(size) {
     potsThisShot: 0,
     poisonThisShot: false,
     deadPortThisShot: false,
-    queenPending: null, // player index who potted the queen, awaiting a cover
     streak: 0,
     settleFrames: 0,
     resolveTime: 0,
@@ -145,6 +177,14 @@ export function createGame(size) {
     portShift: null,
     turnTimeLeft: TURN_FRAMES,
   };
+  // pick the live pocket from the 16 regular pucks first, then drop the
+  // queen on whichever open spot is hardest to pot into that pocket — a
+  // one-time placement. Once potted, it's gone for good, same as any puck.
+  g.livePort = hardestPocket(g);
+  const spot = hardestSpawnSpot(g);
+  const queen = mkPuck(spot.x, spot.y);
+  queen.isQueen = true;
+  pucks.push(queen);
   g.livePort = hardestPocket(g);
   return g;
 }
@@ -241,36 +281,41 @@ export function stepGame(g, ev) {
       const pk = g.pockets[pi];
       if (Math.hypot(p.x - pk.x, p.y - pk.y) < g.pocketR * 0.72) {
         if (!liveGates.includes(pi)) {
-          // dead port: rejected back to center, turn passes regardless of any pots this shot
-          p.x = g.cx; p.y = g.cy;
+          // dead port: rejected and turn passes regardless of any pots this shot, plus
+          // costs the shooter 1 point for the wrong-hole shot (never below 0). A regular
+          // puck gets sent back to center; the queen isn't "potted" by this at all, so it
+          // just stays roughly where it is — nudged clear of the pocket mouth so it can't
+          // keep re-triggering the same dead port next frame.
+          if (p.isQueen) {
+            const dx = p.x - pk.x, dy = p.y - pk.y;
+            const d = Math.hypot(dx, dy) || 1;
+            const clear = g.pocketR * 1.3;
+            const lo = g.pad + g.R, hi = g.S - g.pad - g.R;
+            p.x = Math.min(hi, Math.max(lo, pk.x + (dx / d) * clear));
+            p.y = Math.min(hi, Math.max(lo, pk.y + (dy / d) * clear));
+          } else {
+            p.x = g.cx; p.y = g.cy;
+          }
           p.vx = 0; p.vy = 0;
           p.striker = false;
           p.charge = null;
           g.deadPortThisShot = true;
-          ev.push({ t: "deadPort", x: pk.x, y: pk.y });
+          const penalized = g.scores[g.turn] > 0;
+          if (penalized) g.scores[g.turn]--;
+          ev.push({ t: "deadPort", x: pk.x, y: pk.y, player: g.turn, penalized });
         } else if (p.striker) {
           p.sink = { px: pk.x, py: pk.y, s: 1 };
           g.poisonThisShot = true;
           const opp = 1 - g.turn;
           g.scores[opp]++;
           ev.push({ t: "poison", player: opp });
-        } else if (p.isQueen) {
-          // queen potted: no score yet — must be covered before the turn ends
-          p.sink = { px: pk.x, py: pk.y, s: 1 };
-          g.potsThisShot++;
-          g.queenPending = g.turn;
-          ev.push({ t: "queenPot", player: g.turn });
         } else {
           p.sink = { px: pk.x, py: pk.y, s: 1 };
           const scorer = p.charge !== null ? p.charge : g.turn;
+          const pts = p.isQueen ? QUEEN_POINTS : 1;
           g.potsThisShot++;
-          g.scores[scorer]++;
-          ev.push({ t: "pot", player: scorer });
-          if (g.queenPending !== null) {
-            g.scores[g.queenPending] += QUEEN_BONUS;
-            ev.push({ t: "queenCover", player: g.queenPending });
-            g.queenPending = null;
-          }
+          g.scores[scorer] += pts;
+          ev.push({ t: p.isQueen ? "queenPot" : "pot", player: scorer, pts });
         }
         break;
       }
@@ -298,20 +343,31 @@ function endMatch(g, winner, ev) {
   ev.push({ t: "end", winner });
 }
 
-// queen potted but not covered before the turn ends — it returns uncovered
-function returnQueenIfPending(g, ev) {
-  if (g.queenPending === null) return;
-  const queen = g.pucks.find((p) => p.isQueen);
-  if (queen) {
-    queen.alive = true;
-    queen.sink = null;
-    queen.x = g.cx; queen.y = g.cy;
-    queen.vx = 0; queen.vy = 0;
-    queen.striker = false;
-    queen.charge = null;
-  }
-  g.queenPending = null;
-  ev.push({ t: "queenReturn" });
+// the most points either player could still conceivably bank from what's
+// left on the board — every remaining puck at best-case value, plus every
+// streak bonus that many pucks could theoretically string together in one
+// unbroken turn. Deliberately generous: if even THIS can't close the gap,
+// the outcome is truly locked in.
+function maxRemainingPoints(g) {
+  let n = 0, hasQueen = false;
+  g.pucks.forEach((p) => {
+    if (!p.alive || p.sink) return;
+    if (p.isQueen) { hasQueen = true; } else { n++; }
+  });
+  const base = n + (hasQueen ? QUEEN_POINTS : 0);
+  const bonus = Math.floor((n + (hasQueen ? 1 : 0)) / STREAK_BONUS_EVERY) * STREAK_BONUS_POINTS;
+  return base + bonus;
+}
+
+// mercy rule: once the trailing player can no longer catch up even in the
+// best possible case (they clear the whole board, the leader scores nothing
+// more), there's no point grinding out the rest of the match — end it now.
+function checkClinched(g, ev, shooter) {
+  if (g.winner !== null) return false;
+  const maxLeft = maxRemainingPoints(g);
+  if (g.scores[0] > g.scores[1] + maxLeft) { endMatch(g, 0, ev); ev.push({ t: "shotDone", shooter }); return true; }
+  if (g.scores[1] > g.scores[0] + maxLeft) { endMatch(g, 1, ev); ev.push({ t: "shotDone", shooter }); return true; }
+  return false;
 }
 
 function finishShot(g, ev) {
@@ -328,7 +384,20 @@ function finishShot(g, ev) {
   }
 
   const keepTurn = g.potsThisShot > 0 && !g.poisonThisShot && !g.deadPortThisShot;
-  if (!keepTurn) returnQueenIfPending(g, ev);
+  let streakBonusN = 0;
+  if (keepTurn) {
+    g.streak++;
+    if (g.streak % STREAK_BONUS_EVERY === 0) {
+      g.scores[g.turn] += STREAK_BONUS_POINTS;
+      streakBonusN = g.streak;
+    }
+  } else {
+    g.streak = 0;
+  }
+
+  // scores (including any streak bonus just banked) are final for this shot —
+  // check both possible endings before deciding whether play continues
+  if (checkClinched(g, ev, shooter)) return;
 
   const remaining = g.pucks.filter((p) => p.alive && !p.sink).length;
   if (remaining === 0) {
@@ -346,10 +415,9 @@ function finishShot(g, ev) {
   }
 
   if (keepTurn) {
-    g.streak++;
-    if (g.streak >= 2) ev.push({ t: "streak", n: g.streak, player: g.turn });
+    if (g.streak >= 2 && !streakBonusN) ev.push({ t: "streak", n: g.streak, player: g.turn });
+    if (streakBonusN) ev.push({ t: "streakBonus", n: streakBonusN, player: g.turn });
   } else {
-    g.streak = 0;
     g.turn = 1 - g.turn;
     ev.push({ t: "turn", turn: g.turn });
   }
@@ -359,9 +427,8 @@ function finishShot(g, ev) {
 }
 
 // no shot taken before the shot clock ran out — turn passes with no score,
-// same as any other foul (and the queen, if pending, goes uncovered too)
+// same as any other foul
 function turnTimeoutPass(g, ev) {
-  returnQueenIfPending(g, ev);
   g.streak = 0;
   g.turn = 1 - g.turn;
   g.turnTimeLeft = TURN_FRAMES;
@@ -378,7 +445,6 @@ export function serialize(g) {
     winner: g.winner,
     streak: g.streak,
     frame: g.frame,
-    queenPending: g.queenPending,
     livePort: g.livePort,
     portShift: g.portShift,
     turnTimeLeft: g.turnTimeLeft,
@@ -399,7 +465,6 @@ export function applySync(g, snap) {
   g.winner = snap.winner;
   g.streak = snap.streak;
   g.frame = snap.frame;
-  g.queenPending = snap.queenPending ?? null;
   g.livePort = snap.livePort ?? g.livePort;
   g.portShift = snap.portShift ?? null;
   g.turnTimeLeft = snap.turnTimeLeft ?? TURN_FRAMES;
@@ -407,6 +472,11 @@ export function applySync(g, snap) {
 }
 
 // ---------------- AI (local play only) ----------------
+// note: the gate below is deliberately loose (any forward alignment, not a
+// "confident" one) because the live pocket is always whichever one is
+// currently hardest — a strict quality bar meant the AI would routinely
+// find nothing worth trying and default to an aimless nudge, so it could
+// go an entire match without scoring or making real progress.
 export function aiChooseShot(g) {
   const live = g.pucks.map((p, i) => ({ ...p, i })).filter((p) => p.alive && !p.sink);
   if (!live.length) return null;
@@ -423,7 +493,7 @@ export function aiChooseShot(g) {
         const tpx = pk.x - t.x, tpy = pk.y - t.y;
         const tpd = Math.hypot(tpx, tpy);
         const dot = (stx * tpx + sty * tpy) / (std * tpd || 1);
-        if (dot > 0.72 && std > g.R * 2.2) {
+        if (dot > 0 && std > g.R * 2.2) {
           const score = dot * 2.2 - std / g.S - tpd / (g.S * 2);
           if (!best || score > best.score) best = { s, t, score, std, tpd };
         }

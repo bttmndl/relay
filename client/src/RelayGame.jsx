@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createGame, launch, stepGame, serialize, applySync, aiChooseShot,
-  getLivePorts, portRotateInfo, PNAME, QUEEN_BONUS, TURN_SECONDS,
+  getLivePorts, portRotateInfo, PNAME, QUEEN_POINTS, STREAK_BONUS_POINTS, TURN_SECONDS,
 } from "./engine.js";
 import { getSocket } from "./net.js";
 import { hexToRgb } from "./themes.js";
@@ -76,7 +76,6 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   const [rematchState, setRematchState] = useState(null); // 'sent' | 'received'
   const [emoteFx, setEmoteFx] = useState(null);
   const [portsIn, setPortsIn] = useState(null); // seconds left in an active port-shift warning, or null
-  const [queenPending, setQueenPending] = useState(null); // player index awaiting a cover, or null
   const [turnSecLeft, setTurnSecLeft] = useState(TURN_SECONDS);
   const [turnToken, setTurnToken] = useState(0); // bumped whenever the shot clock resets, to restart its border animation
 
@@ -99,7 +98,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
     if (!sfx.current) sfx.current = makeSfx();
     arcs.current = [];
     rejects.current = [];
-    setScores([0, 0]); setTurn(0); setWinner(null); setQueenPending(null);
+    setScores([0, 0]); setTurn(0); setWinner(null);
     setTurnSecLeft(TURN_SECONDS); setTurnToken(0);
 
     const beginMatch = () => {
@@ -142,7 +141,6 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       if (!g) return;
       applySync(g, snap);
       setScores([...g.scores]); setTurn(g.turn);
-      setQueenPending(g.queenPending);
       if (g.winner !== null && winner === null) setWinner(g.winner);
     };
     const onLeft = () => { setOppLeft(true); setWinner(me); sfx.current?.win(); };
@@ -181,22 +179,16 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       else if (e.t === "deadPort") {
         sfx.current?.reject();
         rejects.current.push({ x: e.x, y: e.y, t: 1 });
-        say("PORT OFFLINE — RETURNED", "#FF6A6A", 1400);
+        if (e.penalized) {
+          setScores([...g.scores]);
+          say("WRONG HOLE! −1", "#FF6A6A", 1500);
+        } else {
+          say("PORT OFFLINE — RETURNED", "#FF6A6A", 1400);
+        }
       }
       else if (e.t === "queenPot") {
-        sfx.current?.charge();
-        setQueenPending(e.player);
-        say("QUEEN CAPTURED — COVER IT!", theme.canvas.queen, 1800);
-      }
-      else if (e.t === "queenCover") {
-        sfx.current?.pot(); setScores([...g.scores]);
-        setQueenPending(null);
-        say(`QUEEN COVERED! +${QUEEN_BONUS} BONUS`, players[e.player], 1800);
-      }
-      else if (e.t === "queenReturn") {
-        sfx.current?.reject();
-        setQueenPending(null);
-        say("QUEEN NOT COVERED — RETURNED", "#FF6A6A", 1600);
+        sfx.current?.win(); setScores([...g.scores]);
+        say(`QUEEN! +${QUEEN_POINTS}`, theme.canvas.queen, 1800);
       }
       else if (e.t === "turnTimeout") {
         sfx.current?.reject();
@@ -204,6 +196,10 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         say("TIME'S UP — TURN PASSED", "#FF6A6A", 1500);
       }
       else if (e.t === "streak") say(`RELAY ×${e.n}`, players[e.player], 1200);
+      else if (e.t === "streakBonus") {
+        setScores([...g.scores]);
+        say(`${e.n} IN A ROW! +${STREAK_BONUS_POINTS} BONUS`, players[e.player], 1600);
+      }
       else if (e.t === "turn") setTurn(e.turn);
       else if (e.t === "end") { sfx.current?.win(); setTimeout(() => setWinner(e.winner), 600); }
       else if (e.t === "shotDone") {
@@ -838,15 +834,6 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           : mode === "online" ? (turn === me ? "YOUR SHOT — FLICK ANY PUCK" : "OPPONENT IS AIMING…")
           : `${PNAME[turn]} — FLICK ANY PUCK`}
       </div>
-      {queenPending !== null && winner === null && !waitingStart && (
-        <div style={{
-          fontFamily: "'Audiowide', sans-serif", fontSize: 9, letterSpacing: 2, color: theme.canvas.queen,
-          margin: "-4px 0 8px", animation: "rlPulse 0.8s infinite",
-        }}>
-          ♛ QUEEN PENDING — POT ONE OF YOUR OWN TO COVER
-        </div>
-      )}
-
       <div style={{ position: "relative" }}>
         <canvas
           ref={canvasRef}
