@@ -49,23 +49,30 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   const holeMidRgb = hexToRgb(theme.canvas.holeMid);
   const rootRef = useRef(null);
   const [w, setW] = useState(() => document.documentElement.clientWidth || window.innerWidth);
+  const [h, setH] = useState(() => window.visualViewport?.height || window.innerHeight);
   useEffect(() => {
     const measure = () => {
       const el = rootRef.current;
       setW(el ? el.clientWidth : document.documentElement.clientWidth || window.innerWidth);
+      setH(window.visualViewport?.height || window.innerHeight);
     };
     measure();
     const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
     if (ro && rootRef.current) ro.observe(rootRef.current);
     window.addEventListener("resize", measure);
     window.addEventListener("orientationchange", measure);
+    window.visualViewport?.addEventListener("resize", measure);
     return () => {
       if (ro) ro.disconnect();
       window.removeEventListener("resize", measure);
       window.removeEventListener("orientationchange", measure);
+      window.visualViewport?.removeEventListener("resize", measure);
     };
   }, []);
-  const size = Math.min(440, w - 20);
+  // Score row, prompt, and buttons sit around the board. Size the square so
+  // that whole stack fits the visible screen, then center it.
+  const chrome = 168;
+  const size = Math.max(220, Math.min(440, w - 20, h - chrome));
 
   const [turn, setTurn] = useState(0);
   const [scores, setScores] = useState([0, 0]);
@@ -776,7 +783,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   };
 
   return (
-    <div ref={rootRef} style={{ minHeight: "100vh", width: "100%", background: `linear-gradient(180deg, ${C.board}, ${C.boardDeep})`, color: C.text, fontFamily: "'Space Mono', monospace", display: "flex", flexDirection: "column", alignItems: "center", paddingBottom: 40, userSelect: "none", WebkitUserSelect: "none", boxSizing: "border-box" }}>
+    <div ref={rootRef} style={{ minHeight: "100dvh", width: "100%", background: `linear-gradient(180deg, ${C.board}, ${C.boardDeep})`, color: C.text, fontFamily: "'Space Mono', monospace", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 0", userSelect: "none", WebkitUserSelect: "none", boxSizing: "border-box" }}>
       <style>{`
         @keyframes rlIn { from{opacity:0; transform:scale(.85)} to{opacity:1; transform:scale(1)} }
         @keyframes rlPulse { 0%,100%{opacity:.55} 50%{opacity:1} }
@@ -792,7 +799,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       `}</style>
 
       {/* HUD */}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", maxWidth: size, padding: "30px 4px 8px", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", maxWidth: size, padding: "4px 4px 8px", gap: 8 }}>
         {[0, 1].map((p) => (
           <div key={p} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "8px 14px", borderRadius: 10, background: C.panel, border: `1px solid ${turn === p && winner === null ? players[p] : C.line}`, boxShadow: turn === p && winner === null ? `0 0 14px ${players[p]}44` : "none", minWidth: 88, position: "relative", overflow: "visible" }}>
             <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 8, letterSpacing: 1.5, color: players[p], whiteSpace: "nowrap" }}>{nameFor(p)}</div>
