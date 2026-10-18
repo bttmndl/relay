@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import RelayGame from "./RelayGame.jsx";
-import { getSocket } from "./net.js";
+import { getSocket, SERVER_URL, loadIdentity, saveName, saveResume, loadResume } from "./net.js";
 import { THEMES, getTheme, loadStoredThemeId, storeThemeId } from "./themes.js";
 
 export default function App() {
@@ -11,6 +11,10 @@ export default function App() {
   const [roomCode, setRoomCode] = useState(null); // code I host
   const [joinInput, setJoinInput] = useState("");
   const [connected, setConnected] = useState(false);
+  const [profile, setProfile] = useState(null);
+  const [leaders, setLeaders] = useState([]);
+  const [recent, setRecent] = useState([]);
+  const [name, setName] = useState(() => loadIdentity().name);
   const [themeId, setThemeId] = useState(loadStoredThemeId);
   const theme = getTheme(themeId);
   const C = {
@@ -23,36 +27,61 @@ export default function App() {
   // socket lifecycle — App owns matchmaking events
   useEffect(() => {
     const socket = getSocket();
-    const onConnect = () => setConnected(true);
+    const onConnect = () => {
+      setConnected(true);
+      const id = loadIdentity();
+      socket.emit("hello", { ...id, name: name || id.name });
+      const token = loadResume();
+      if (token) socket.emit("resume", { token });
+    };
     const onDisconnect = () => setConnected(false);
     const onWaiting = () => setStatus("Searching for a rival…");
     const onRoomCreated = ({ roomCode }) => {
       setRoomCode(roomCode);
       setStatus(null);
     };
-    const onStart = ({ playerIndex, startAt }) => {
-      setSession({ playerIndex, startAt, nonce: Date.now() });
+    const onStart = (payload) => {
+      if (payload.resumeToken) saveResume(payload.resumeToken);
+      setSession({
+        playerIndex: payload.playerIndex,
+        startAt: payload.startAt,
+        nonce: Date.now(),
+        snapshot: payload.snapshot || null,
+        resumed: !!payload.resumed,
+      });
       setMode("online");
       setScreen("game");
       setStatus(null);
       setRoomCode(null);
     };
     const onError = ({ message }) => setStatus(message);
+    const onProfile = (next) => setProfile(next);
+    const identify = () => {
+      const id = loadIdentity();
+      socket.emit("hello", { ...id, name: name || id.name });
+      const token = loadResume();
+      if (token) socket.emit("resume", { token });
+    };
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
     socket.on("waiting", onWaiting);
     socket.on("roomCreated", onRoomCreated);
     socket.on("startGame", onStart);
+    socket.on("resumed", onStart);
     socket.on("errorMsg", onError);
+    socket.on("profile", onProfile);
+    if (socket.connected) onConnect();
     return () => {
       socket.off("connect", onConnect);
       socket.off("disconnect", onDisconnect);
       socket.off("waiting", onWaiting);
       socket.off("roomCreated", onRoomCreated);
       socket.off("startGame", onStart);
+      socket.off("resumed", onStart);
       socket.off("errorMsg", onError);
+      socket.off("profile", onProfile);
     };
-  }, []);
+  }, [name]);
 
   const startLocal = (m) => {
     setMode(m);
@@ -65,12 +94,21 @@ export default function App() {
       setSession({ nonce: Date.now() });
       return;
     }
-    if (mode === "online") getSocket().emit("leaveRoom");
+    if (mode === "online") {
+      saveResume(null);
+      getSocket().emit("leaveRoom");
+    }
     setScreen("menu");
     setMode(null);
     setSession(null);
     setStatus(null);
     setRoomCode(null);
+  };
+
+  const identify = () => {
+    const id = loadIdentity();
+    saveName(name);
+    getSocket().emit("hello", { ...id, name });
   };
 
   const cancelLobby = () => {
@@ -79,6 +117,20 @@ export default function App() {
     setRoomCode(null);
     setScreen("menu");
   };
+
+  useEffect(() => {
+    if (screen !== "online") return;
+    let gone = false;
+    fetch(`${SERVER_URL}/leaderboard`)
+      .then((r) => r.json())
+      .then((body) => {
+        if (gone) return;
+        setLeaders(body.leaders || []);
+        setRecent(body.recent || []);
+      })
+      .catch(() => {});
+    return () => { gone = true; };
+  }, [screen, profile]);
 
   // ---------------- styles ----------------
   const btn = (bg, col) => ({
@@ -115,14 +167,26 @@ export default function App() {
           <span style={{ color: C.volt }}>ONLINE</span> <span style={{ color: C.amp }}>1V1</span>
         </h2>
         <div style={{ fontSize: 11, color: connected ? C.volt : "#FF6A6A", letterSpacing: 1 }}>
-          {connected ? "● SERVER CONNECTED" : "● CONNECTING TO SERVER…"}
+          {connected ? `● SERVER CONNECTED${profile ? ` · ${profile.rating}` : ""}` : "● CONNECTING TO SERVER…"}
         </div>
+        <input
+          value={name}
+          onChange={(e) => setName(e.target.value.slice(0, 16))}
+          onBlur={identify}
+          placeholder="YOUR NAME"
+          maxLength={16}
+          style={{
+            fontFamily: "'Space Mono', monospace", fontSize: 14, letterSpacing: 2,
+            width: 220, textAlign: "center", background: C.panel, color: C.text,
+            border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 8px", outline: "none",
+          }}
+        />
         <div style={{ height: 10 }} />
 
-        <button style={btn("#0E2415", C.volt)} onClick={() => { setStatus("Searching for a rival…"); getSocket().emit("quickMatch"); }}>
+        <button style={btn("#0E2415", C.volt)} onClick={() => { identify(); setStatus("Searching for a rival…"); getSocket().emit("quickMatch"); }}>
           ⚡ QUICK MATCH
         </button>
-        <button style={btn("#241708", C.amp)} onClick={() => { setStatus(null); getSocket().emit("createRoom"); }}>
+        <button style={btn("#241708", C.amp)} onClick={() => { identify(); setStatus(null); getSocket().emit("createRoom"); }}>
           CREATE ROOM
         </button>
 
@@ -140,7 +204,7 @@ export default function App() {
           />
           <button
             style={{ ...btn(C.panel, C.hot), width: "auto", padding: "12px 18px", boxShadow: "none", border: `1px solid ${C.hot}` }}
-            onClick={() => joinInput.length === 6 && getSocket().emit("joinRoom", { roomCode: joinInput })}
+            onClick={() => { identify(); joinInput.length === 6 && getSocket().emit("joinRoom", { roomCode: joinInput }); }}
           >
             JOIN
           </button>
@@ -158,6 +222,22 @@ export default function App() {
         <button style={{ ...btn(C.panel, C.dim), width: "auto", padding: "10px 20px", fontSize: 11, boxShadow: "none", border: `1px solid ${C.line}` }} onClick={cancelLobby}>
           BACK
         </button>
+        {leaders.length > 0 && (
+          <div style={{ marginTop: 18, width: "100%", maxWidth: 320, textAlign: "left" }}>
+            <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 10, letterSpacing: 3, color: C.dim, marginBottom: 8, textAlign: "center" }}>LADDER</div>
+            {leaders.slice(0, 8).map((p, i) => (
+              <div key={p.id} style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderTop: `1px solid ${C.line}` }}>
+                <span>{i + 1}. {p.name}</span>
+                <span style={{ color: C.copper }}>{p.rating}</span>
+              </div>
+            ))}
+            {recent.slice(0, 3).map((m) => (
+              <div key={m.id} style={{ fontSize: 10, color: C.dim, marginTop: 6 }}>
+                {m.players[0].name} {m.players[0].score}–{m.players[1].score} {m.players[1].name}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     );
   }

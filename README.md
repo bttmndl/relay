@@ -38,8 +38,11 @@ Open two browser windows on `localhost:5173` → PLAY ONLINE → Create Room in 
 3. **Root Directory:** `server`
 4. **Build Command:** `npm install` — **Start Command:** `npm start`
 5. Environment variables:
-   - `CLIENT_ORIGIN` = your Vercel URL (e.g. `https://relay-yourname.vercel.app`) — or leave unset for `*` while testing.
-6. Note the service URL, e.g. `https://relay-server-xxxx.onrender.com`.
+   - `CLIENT_ORIGIN` = extra allowed sites, comma-separated. `https://relaypuck.com`, `https://www.relaypuck.com`, localhost, and Capacitor are already allowed.
+   - `RELAY_DATA_FILE` = optional path for the accounts, match history, and saved rooms. Defaults to `server/data/store.json`.
+6. Note the service URL, e.g. `https://relay-d0fn.onrender.com`.
+
+The server checks every flick, keeps a 45 second reconnect window, and stores accounts plus results. On Render's free tier the disk is wiped when the instance sleeps, so set `RELAY_DATA_FILE` on a persistent disk if the ladder must survive that.
 
 Free-tier note: Render free instances sleep after inactivity; the first connection after a sleep takes ~30–50s. The client shows "CONNECTING TO SERVER…" until the socket is up.
 
@@ -48,9 +51,7 @@ Free-tier note: Render free instances sleep after inactivity; the first connecti
 2. **Root Directory:** `client` (framework auto-detects Vite).
 3. Environment variable:
    - `VITE_SERVER_URL` = your Render URL (e.g. `https://relay-server-xxxx.onrender.com`)
-4. Deploy. Remember: `VITE_*` variables are baked in at build time — redeploy after changing them.
-
-Then set `CLIENT_ORIGIN` on Render to the final Vercel domain and redeploy the server (locks CORS to your app).
+4. Deploy. Remember: `VITE_*` variables are baked in at build time — redeploy after changing them. `https://relaypuck.com` is already on the server allowlist.
 
 ## Project layout
 

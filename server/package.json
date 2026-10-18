@@ -2,11 +2,13 @@
   "name": "relay-server",
   "version": "1.0.0",
   "private": true,
+  "type": "module",
   "main": "index.js",
   "engines": { "node": ">=18" },
   "scripts": {
     "start": "node index.js",
-    "dev": "node index.js"
+    "dev": "node index.js",
+    "test": "node --test"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import {
   createGame, launch, stepGame, serialize, applySync, aiChooseShot,
-  getLivePorts, portRotateInfo, PNAME, QUEEN_POINTS, STREAK_BONUS_POINTS, TURN_SECONDS,
+  getLivePorts, portRotateInfo, PNAME, QUEEN_POINTS, STREAK_BONUS_POINTS, TURN_SECONDS, ONLINE_BOARD,
 } from "./engine.js";
-import { getSocket } from "./net.js";
+import { getSocket, saveResume } from "./net.js";
 import { hexToRgb } from "./themes.js";
 
 const EMOTES = ["👍", "🔥", "😂", "😭"];
@@ -73,18 +73,20 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   // that whole stack fits the visible screen, then center it.
   const chrome = 168;
   const size = Math.max(220, Math.min(440, w - 20, h - chrome));
+  const engineSize = mode === "online" ? ONLINE_BOARD : size;
 
   const [turn, setTurn] = useState(0);
   const [scores, setScores] = useState([0, 0]);
   const [winner, setWinner] = useState(null);
   const [callout, setCallout] = useState(null);
-  const [waitingStart, setWaitingStart] = useState(mode === "online");
+  const [waitingStart, setWaitingStart] = useState(mode === "online" && !online?.resumed);
   const [oppLeft, setOppLeft] = useState(false);
   const [rematchState, setRematchState] = useState(null); // 'sent' | 'received'
   const [emoteFx, setEmoteFx] = useState(null);
   const [portsIn, setPortsIn] = useState(null); // seconds left in an active port-shift warning, or null
   const [turnSecLeft, setTurnSecLeft] = useState(TURN_SECONDS);
   const [turnToken, setTurnToken] = useState(0); // bumped whenever the shot clock resets, to restart its border animation
+  const [linkNote, setLinkNote] = useState(null);
 
   const canvasRef = useRef(null);
   const G = useRef(null);
@@ -101,12 +103,13 @@ export default function RelayGame({ mode, online, onExit, theme }) {
 
   // ---------------- init ----------------
   useEffect(() => {
-    G.current = createGame(size);
+    G.current = createGame(engineSize);
+    if (mode === "online" && online?.snapshot) applySync(G.current, online.snapshot);
     if (!sfx.current) sfx.current = makeSfx();
     arcs.current = [];
     rejects.current = [];
-    setScores([0, 0]); setTurn(0); setWinner(null);
-    setTurnSecLeft(TURN_SECONDS); setTurnToken(0);
+    setScores([...(G.current.scores)]); setTurn(G.current.turn); setWinner(G.current.winner);
+    setTurnSecLeft(Math.ceil(G.current.turnTimeLeft / 60)); setTurnToken(0);
 
     const beginMatch = () => {
       setWaitingStart(false);
@@ -123,10 +126,14 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         players[mode === "online" ? me : 0], 2400);
     };
 
-    if (mode === "online") {
+    if (mode === "online" && !online?.resumed) {
       const delay = Math.max(0, online.startAt - Date.now());
       const t = setTimeout(beginMatch, delay);
       return () => clearTimeout(t);
+    }
+    if (online?.resumed) {
+      setWaitingStart(false);
+      return;
     }
     beginMatch();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -143,28 +150,44 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       launch(g, idx, ang, v, ev);
       drainEvents(ev);
     };
-    const onSync = (snap) => {
+    const applyServer = (snap) => {
       const g = G.current;
-      if (!g) return;
+      if (!g || !snap) return;
       applySync(g, snap);
       setScores([...g.scores]); setTurn(g.turn);
-      if (g.winner !== null && winner === null) setWinner(g.winner);
+      setTurnSecLeft(Math.ceil((g.turnTimeLeft || 0) / 60));
+      if (g.winner !== null) setWinner(g.winner);
     };
-    const onLeft = () => { setOppLeft(true); setWinner(me); sfx.current?.win(); };
+    const onState = ({ kind, snap, reason }) => {
+      const g = G.current;
+      if (!g || !snap) return;
+      if (kind === "tick" && g.phase === "resolve") return;
+      applyServer(snap);
+      if (reason) say(reason, "#FF6A6A", 1200);
+    };
+    const onDisc = () => setLinkNote("OPPONENT RECONNECTING…");
+    const onBack = () => setLinkNote(null);
+    const onLeft = () => { saveResume(null); setLinkNote(null); setOppLeft(true); setWinner(me); sfx.current?.win(); };
     const onRematchReq = () => setRematchState("received");
     const onEmote = ({ emote }) => {
       setEmoteFx({ emote, side: 1 - me, key: Date.now() });
       setTimeout(() => setEmoteFx(null), 1800);
     };
     socket.on("opponentFlick", onFlick);
-    socket.on("syncState", onSync);
+    socket.on("syncState", applyServer);
+    socket.on("state", onState);
     socket.on("opponentLeft", onLeft);
+    socket.on("opponentDisconnected", onDisc);
+    socket.on("opponentReconnected", onBack);
     socket.on("rematchRequested", onRematchReq);
     socket.on("emote", onEmote);
     return () => {
       socket.off("opponentFlick", onFlick);
-      socket.off("syncState", onSync);
+      socket.off("syncState", applyServer);
+      socket.off("state", onState);
       socket.off("opponentLeft", onLeft);
+      socket.off("opponentDisconnected", onDisc);
+      socket.off("opponentReconnected", onBack);
       socket.off("rematchRequested", onRematchReq);
       socket.off("emote", onEmote);
     };
@@ -234,8 +257,8 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   useEffect(() => {
     const canvas = canvasRef.current;
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    canvas.width = size * dpr;
-    canvas.height = size * dpr;
+    canvas.width = engineSize * dpr;
+    canvas.height = engineSize * dpr;
     const ctx = canvas.getContext("2d");
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
@@ -713,7 +736,8 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   };
   const getPos = (e) => {
     const rect = canvasRef.current.getBoundingClientRect();
-    return { x: e.clientX - rect.left, y: e.clientY - rect.top };
+    const scale = rect.width ? (G.current?.S || rect.width) / rect.width : 1;
+    return { x: (e.clientX - rect.left) * scale, y: (e.clientY - rect.top) * scale };
   };
   const onDown = (e) => {
     if (!canShoot()) return;
@@ -834,8 +858,9 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         )}
       </div>
 
-      <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 10, letterSpacing: 3, color: players[turn], margin: "2px 0 8px", animation: "rlPulse 1.6s infinite", minHeight: 14 }}>
-        {winner !== null ? " "
+      <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 10, letterSpacing: 3, color: linkNote ? "#FF6A6A" : players[turn], margin: "2px 0 8px", animation: "rlPulse 1.6s infinite", minHeight: 14 }}>
+        {linkNote ? linkNote
+          : winner !== null ? " "
           : waitingStart ? "SYNCING…"
           : mode === "ai" && turn === 1 ? "AI IS ROUTING…"
           : mode === "online" ? (turn === me ? "YOUR SHOT — FLICK ANY PUCK" : "OPPONENT IS AIMING…")

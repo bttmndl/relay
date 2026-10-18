@@ -28,6 +28,9 @@ export const STREAK_BONUS_POINTS = 1;
 // Running out passes the turn with no score, like any other foul.
 export const TURN_SECONDS = 20;
 const TURN_FRAMES = TURN_SECONDS * 60;
+// Online matches share one board size so the server can replay every flick.
+// Phones still scale that board to fit the screen.
+export const ONLINE_BOARD = 400;
 
 // ---------------- hot ports ----------------
 // pockets are indexed [TL, TR, BL, BR]. Only one is "live" (powered) at a
@@ -439,7 +442,7 @@ function turnTimeoutPass(g, ev) {
 // ---------------- online sync ----------------
 export function serialize(g) {
   return {
-    pucks: g.pucks.map((p) => ({ x: p.x, y: p.y, alive: p.alive })),
+    pucks: g.pucks.map((p) => ({ x: p.x, y: p.y, alive: p.alive, isQueen: !!p.isQueen })),
     scores: [...g.scores],
     turn: g.turn,
     winner: g.winner,
@@ -457,6 +460,7 @@ export function applySync(g, snap) {
     if (!p) return;
     p.x = sp.x; p.y = sp.y;
     p.alive = sp.alive;
+    p.isQueen = !!sp.isQueen;
     p.vx = 0; p.vy = 0;
     p.striker = false; p.charge = null; p.sink = null;
   });
