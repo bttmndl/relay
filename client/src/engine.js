@@ -81,11 +81,10 @@ function hardestPocket(g) {
 }
 
 // where's the single hardest open spot on the board to pot INTO, given the
-// current layout and live pocket? Used once, at setup, to place the queen.
-// Scans a grid of candidate points (skipping anything that would overlap a
-// puck, a pocket, or a wall) and scores each one exactly like pocketEase
-// does — the best shot any live puck could currently take at a target
-// sitting there. Lowest wins.
+// current layout and the live pocket? Same idea as the hot-port shift:
+// score every open point by the best shot any live puck could take at a
+// target sitting there, and keep the worst one. Called after a shot when
+// the queen was knocked off her spot.
 function hardestSpawnSpot(g) {
   const pk = g.pockets[g.livePort];
   const sources = g.pucks.filter((p) => p.alive && !p.sink && !p.isQueen);
@@ -180,12 +179,9 @@ export function createGame(size) {
     portShift: null,
     turnTimeLeft: TURN_FRAMES,
   };
-  // pick the live pocket from the 16 regular pucks first, then drop the
-  // queen on whichever open spot is hardest to pot into that pocket — a
-  // one-time placement. Once potted, it's gone for good, same as any puck.
-  g.livePort = hardestPocket(g);
-  const spot = hardestSpawnSpot(g);
-  const queen = mkPuck(spot.x, spot.y);
+  // queen starts in the open center. If a shot knocks her off that spot,
+  // finishShot puts her back on the hardest open point for the live pocket.
+  const queen = mkPuck(cx, cy);
   queen.isQueen = true;
   pucks.push(queen);
   g.livePort = hardestPocket(g);
@@ -206,6 +202,9 @@ export function launch(g, idx, ang, v, ev) {
   g.potsThisShot = 0;
   g.poisonThisShot = false;
   g.deadPortThisShot = false;
+  const queen = g.pucks.find((p) => p.isQueen && p.alive && !p.sink);
+  g.queenShotX = queen ? queen.x : null;
+  g.queenShotY = queen ? queen.y : null;
   g.phase = "resolve";
   g.settleFrames = 0;
   g.resolveTime = 0;
@@ -424,9 +423,25 @@ function finishShot(g, ev) {
     g.turn = 1 - g.turn;
     ev.push({ t: "turn", turn: g.turn });
   }
+  relocateQueen(g, ev);
   g.phase = "aim";
   g.turnTimeLeft = TURN_FRAMES;
   ev.push({ t: "shotDone", shooter });
+}
+
+function relocateQueen(g, ev) {
+  const queen = g.pucks.find((p) => p.isQueen && p.alive && !p.sink);
+  if (!queen || g.queenShotX == null) return;
+  const moved = Math.hypot(queen.x - g.queenShotX, queen.y - g.queenShotY);
+  g.queenShotX = null;
+  g.queenShotY = null;
+  if (moved < g.R * 0.5) return;
+  const spot = hardestSpawnSpot(g);
+  queen.x = spot.x;
+  queen.y = spot.y;
+  queen.vx = 0;
+  queen.vy = 0;
+  ev.push({ t: "queenShift", x: spot.x, y: spot.y });
 }
 
 // no shot taken before the shot clock ran out — turn passes with no score,

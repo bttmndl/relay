@@ -2,7 +2,7 @@
 
 *Nothing is yours until it moves.*
 
-A flick game with no match clock, but each turn is on its own shot clock. 16 pucks are neutral, plus one special **queen** worth 5 points that starts life sitting on the single hardest spot on the board. The puck you flick becomes your **striker**, and everything it touches gets charged your color. Pot a charged puck for a point and shoot again. Sink your striker and the point goes to your rival (**poison**). Play runs until every puck — queen included — is off the board, or until the trailing player can no longer mathematically catch up — whichever comes first.
+A flick game with no match clock, but each turn is on its own shot clock. 16 pucks are neutral, plus one special **queen** worth 5 points that starts in the center. The puck you flick becomes your **striker**, and everything it touches gets charged your color. Pot a charged puck for a point and shoot again. Sink your striker and the point goes to your rival (**poison**). Play runs until every puck — queen included — is off the board, or until the trailing player can no longer mathematically catch up — whichever comes first.
 
 ## Stack
 
@@ -81,7 +81,7 @@ relay/
 - On your turn flick **any** puck — it becomes your striker
 - Chain charging: striker or any charged puck touching a neutral puck charges it your color
 - **Scoring:** a regular puck potted → 1 point (charge owner if charged, otherwise the shooter). The **queen** → `QUEEN_POINTS` (5 points), no extra condition. Either way the shooter keeps the turn ("RELAY ×n" streaks)
-- **The queen:** placed once, at setup, on whichever open spot is hardest to pot into the live pocket given the starting layout. It just sits there like any other puck — collide with it, charge it, knock it around — until someone actually pots it. Once that happens, it's gone for good, same as any other puck; it does not come back
+- **The queen:** starts in the center. She sits there like any other puck — collide with her, charge her, knock her around — until someone pots her. If a shot moves her and she is still on the board, she is placed on the open spot that is currently hardest to pot into the live pocket, scored the same way the hot port picks the hardest hole. Once potted, she's gone for good.
 - Potting 3 pucks in a row within one unbroken turn (3, 6, 9…) → an extra `STREAK_BONUS_POINTS` (1) on top
 - Striker potted → +1 for the opponent, turn passes (POISON)
 - **Match end:** the board is completely empty (queen included), *or* the trailing player becomes mathematically unable to catch up even in the best case (they clear everything left, the leader scores nothing more) — whichever happens first. That second rule is what keeps a lopsided match from grinding on forever. Equal scores when the board empties → draw
@@ -95,6 +95,6 @@ relay/
 - AI aggression: alignment gate `dot > 0` in `aiChooseShot` — deliberately loose since the live pocket is always the hardest one on the board; a stricter bar left the AI unable to find a "confident" shot most turns
 - Shot clock: `TURN_SECONDS` (20s, `engine.js`) — resets on every `finishShot`, enforced by `turnTimeoutPass` when it runs out mid-`stepGame`
 - Scoring: `QUEEN_POINTS` (5), `STREAK_BONUS_EVERY` (3), `STREAK_BONUS_POINTS` (1) — all in `engine.js`
-- Queen starting spot: `hardestSpawnSpot` in `engine.js` (used once, in `createGame`) — grids the board, throws out points that would overlap a puck/pocket/wall, and scores the rest exactly like `pocketEase` (best shot any live puck could take at a target there); picks the worst one
+- Queen: starts at the center. After a shot that moves her, `hardestSpawnSpot` in `engine.js` grids the open board and picks the point with the worst shot into the live pocket, the same scoring as `pocketEase`.
 - Mercy rule: `checkClinched`/`maxRemainingPoints` in `engine.js` — ends the match the instant no realistic board state could still change the outcome
 - Hot ports: the live pocket is whichever is currently hardest to pot into (`hardestPocket`/`pocketEase` in `engine.js`, scored the same way as the AI's own shot-quality heuristic). A challenger must hold that title for `PORT_SHIFT_WARNING_SECONDS` (5s) before the port actually shifts to it. Potting into a dead port ends your turn and deducts 1 point from the shooter (floored at 0); a regular puck also returns to center, but the queen just gets nudged clear of the pocket mouth since it isn't "potted" by that — see `getLivePorts`/`portRotateInfo`.

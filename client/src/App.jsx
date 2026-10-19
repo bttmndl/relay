@@ -264,7 +264,7 @@ export default function App() {
       </h1>
       <div style={{ ...reveal, display: "flex", flexDirection: "column", alignItems: "center", gap: 10, width: "100%" }}>
       <p style={{ color: C.dim, fontSize: 13, maxWidth: 340, lineHeight: 1.7, margin: "6px 0 16px" }}>
-        16 pucks are neutral, plus one <b style={{ color: "#D6203F" }}>queen</b> worth 5 points, dropped on the single hardest spot on the board. The puck you flick is your <b style={{ color: C.hot }}>striker</b> — everything it touches gets charged your color. Pot a charged puck = 1 point + <b style={{ color: C.volt }}>shoot again</b>, 3 in a row banks a bonus point. Sink your striker = <b style={{ color: "#FF6A6A" }}>point to your rival</b>.
+        16 pucks are neutral, plus one <b style={{ color: "#D6203F" }}>queen</b> worth 5 points in the center. The puck you flick is your <b style={{ color: C.hot }}>striker</b> — everything it touches gets charged your color. Pot a charged puck = 1 point + <b style={{ color: C.volt }}>shoot again</b>, 3 in a row banks a bonus point. Sink your striker = <b style={{ color: "#FF6A6A" }}>point to your rival</b>. If the queen is knocked off her spot, she reappears on the hardest open point.
         <br /><b style={{ color: C.text }}>Most banked wins — the match ends the moment it's decided.</b>
       </p>
       <button style={btn("#0E2415", C.volt)} onClick={() => setScreen("online")}>PLAY ONLINE</button>

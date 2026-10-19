@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { createStore } from "../store.js";
+import { createGame, launch, stepGame } from "../../client/src/engine.js";
 import {
   originAllowed, allow, enqueue, pair, newRoom, attemptFlick, sweep, GRACE_MS, exportRoom, restoreRoom,
 } from "../logic.js";
@@ -101,4 +102,38 @@ test("accounts, matches, and rooms survive a reload", () => {
   assert.equal(restored.players[0].resumeToken, "t0");
   assert.equal(restored.game.pucks.length, 17);
   fs.unlinkSync(file);
+});
+
+function settle(g) {
+  let n = 0;
+  while (g.phase === "resolve" && n++ < 40) stepGame(g, []);
+}
+
+test("queen starts in the center and relocates only after she is moved", () => {
+  const g = createGame(400);
+  const queen = g.pucks.find((p) => p.isQueen);
+  assert.equal(queen.x, g.cx);
+  assert.equal(queen.y, g.cy);
+
+  const other = g.pucks.find((p) => !p.isQueen);
+  launch(g, g.pucks.indexOf(other), 0, 1, []);
+  other.vx = 0;
+  other.vy = 0;
+  settle(g);
+  assert.equal(queen.x, g.cx);
+  assert.equal(queen.y, g.cy);
+
+  const knockedX = g.cx + 37;
+  const knockedY = g.cy - 19;
+  launch(g, g.pucks.indexOf(queen), 0.2, 4, []);
+  queen.vx = 0;
+  queen.vy = 0;
+  queen.x = knockedX;
+  queen.y = knockedY;
+  settle(g);
+  const after = g.pucks.find((p) => p.isQueen && p.alive);
+  assert.ok(after);
+  assert.ok(Math.hypot(after.x - knockedX, after.y - knockedY) > 1);
+  const others = g.pucks.filter((p) => p !== after && p.alive);
+  assert.equal(others.some((p) => Math.hypot(p.x - after.x, p.y - after.y) < g.R * 2), false);
 });

@@ -220,6 +220,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         sfx.current?.win(); setScores([...g.scores]);
         say(`QUEEN! +${QUEEN_POINTS}`, theme.canvas.queen, 1800);
       }
+      else if (e.t === "queenShift") say("QUEEN RESET", theme.canvas.queen, 1200);
       else if (e.t === "turnTimeout") {
         sfx.current?.reject();
         setTurnToken((t) => t + 1);
