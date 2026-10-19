@@ -54,6 +54,7 @@ export default function App() {
       });
       setMode("online");
       setScreen("game");
+      setIntro(false);
       setStatus(null);
       setRoomCode(null);
     };
@@ -151,12 +152,7 @@ export default function App() {
     gap: 10, padding: 20, textAlign: "center",
   };
 
-  const frame = (node) => (
-    <>
-      {node}
-      {intro && <RelayIntro onDone={dismissIntro} />}
-    </>
-  );
+  const frame = (node) => node;
 
   if (screen === "game" && session) {
     return frame(
@@ -252,16 +248,22 @@ export default function App() {
     );
   }
 
+  const reveal = {
+    opacity: intro ? 0 : 1,
+    transition: "opacity .55s ease",
+  };
+
   // ---------------- main menu ----------------
-  return frame(
+  return (
     <div style={page}>
-      <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 11, letterSpacing: 5, color: C.dim }}>
+      <div style={{ ...reveal, fontFamily: "'Audiowide', sans-serif", fontSize: 11, letterSpacing: 5, color: C.dim }}>
         NOTHING IS YOURS UNTIL IT MOVES
       </div>
-      <h1 style={{ fontFamily: "'Audiowide', sans-serif", fontSize: "clamp(46px, 12vw, 70px)", letterSpacing: 8, margin: 0 }}>
+      <h1 id="relay-title" style={{ fontFamily: "'Audiowide', sans-serif", fontSize: "clamp(46px, 12vw, 70px)", letterSpacing: 8, margin: 0, opacity: intro ? 0 : 1 }}>
         <span style={{ color: C.volt }}>RE</span><span style={{ color: C.amp }}>LAY</span>
       </h1>
-      <p style={{ color: C.dim, fontSize: 13, maxWidth: 340, lineHeight: 1.7, margin: "6px 0 26px" }}>
+      <div style={{ ...reveal, display: "flex", flexDirection: "column", alignItems: "center", gap: 10, width: "100%" }}>
+      <p style={{ color: C.dim, fontSize: 13, maxWidth: 340, lineHeight: 1.7, margin: "6px 0 16px" }}>
         16 pucks are neutral, plus one <b style={{ color: "#D6203F" }}>queen</b> worth 5 points, dropped on the single hardest spot on the board. The puck you flick is your <b style={{ color: C.hot }}>striker</b> — everything it touches gets charged your color. Pot a charged puck = 1 point + <b style={{ color: C.volt }}>shoot again</b>, 3 in a row banks a bonus point. Sink your striker = <b style={{ color: "#FF6A6A" }}>point to your rival</b>.
         <br /><b style={{ color: C.text }}>Most banked wins — the match ends the moment it's decided.</b>
       </p>
@@ -304,6 +306,26 @@ export default function App() {
           })}
         </div>
       </div>
+      </div>
+      {intro && (
+        <RelayIntro
+          onDone={dismissIntro}
+          colors={{
+            board: C.board,
+            boardDeep: C.boardDeep,
+            volt: C.volt,
+            amp: C.amp,
+            accent: C.copper,
+            rail: theme.canvas.rail,
+            feltTop: theme.canvas.surfaceTop,
+            feltBottom: theme.canvas.surfaceBottom,
+            puck: theme.neutral,
+            pocket: theme.canvas.holeInner,
+            face: "#F7F3EA",
+            text: C.text,
+          }}
+        />
+      )}
     </div>
   );
 }
