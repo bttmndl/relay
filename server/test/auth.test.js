@@ -19,7 +19,7 @@ test("password hash verifies only the same password", () => {
   assert.equal(verifyPassword("correct horse", "nope"), false);
 });
 
-test("signup keeps guest rating, login token loads it, and a copied id is refused", () => {
+test("signup keeps guest rating, login token loads it, and a copied id is refused", async () => {
   const { store, file } = tempStore();
   const guest = store.upsert({ playerId: "guest-1", name: "Volt", region: "Asia/Kolkata" });
   guest.rating = 1120;
@@ -45,13 +45,13 @@ test("signup keeps guest rating, login token loads it, and a copied id is refuse
 
   const token = store.openSession(account.id);
   const again = createStore(file);
-  const seen = identityFromHello(again, { token, region: "Asia/Kolkata" });
+  const seen = await identityFromHello(again, { token, region: "Asia/Kolkata" });
   assert.equal(seen.account.id, account.id);
   assert.equal(seen.account.email, "volt@relaypuck.com");
-  assert.equal(identityFromHello(again, { token: "stolen" }).code, "expired");
-  assert.equal(identityFromHello(again, { playerId: account.id, name: "Hacker" }).code, "rejected");
+  assert.equal((await identityFromHello(again, { token: "stolen" })).code, "expired");
+  assert.equal((await identityFromHello(again, { playerId: account.id, name: "Hacker" })).code, "rejected");
 
-  const guestHello = identityFromHello(again, { playerId: "someone-else", name: "Amp" });
+  const guestHello = await identityFromHello(again, { playerId: "someone-else", name: "Amp" });
   assert.equal(guestHello.account.member || guestHello.account.email, null);
   assert.equal(again.leaderboard(5).some((row) => row.id === guestHello.account.id), false);
   assert.equal(again.leaderboard(5)[0].id, account.id);

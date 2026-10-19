@@ -37,12 +37,12 @@ export function tokenHash(token) {
   return crypto.createHash("sha256").update(String(token)).digest("hex");
 }
 
-export function identityFromHello(store, body = {}) {
+export async function identityFromHello(store, body = {}) {
   if (body.token) {
-    const account = store.accountForToken(body.token);
+    const account = await store.accountForToken(body.token);
     if (!account) return { account: null, error: "Sign in expired", code: "expired" };
     return {
-      account: store.upsert({
+      account: await store.upsert({
         playerId: account.id,
         name: account.name,
         region: body.region || account.region,
@@ -51,10 +51,10 @@ export function identityFromHello(store, body = {}) {
     };
   }
   const requested = String(body.playerId || "");
-  const existing = requested ? store.get(requested) : null;
+  const existing = requested ? await store.get(requested) : null;
   if (existing?.email) return { account: null, error: "Sign in required", code: "rejected" };
   return {
-    account: store.upsert({
+    account: await store.upsert({
       playerId: requested || crypto.randomUUID(),
       name: body.name,
       region: body.region,

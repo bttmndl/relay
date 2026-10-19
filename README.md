@@ -39,10 +39,13 @@ Open two browser windows on `localhost:5173` → PLAY ONLINE → Create Room in 
 4. **Build Command:** `npm install` — **Start Command:** `npm start`
 5. Environment variables:
    - `CLIENT_ORIGIN` = extra allowed sites, comma-separated. `https://relaypuck.com`, `https://www.relaypuck.com`, localhost, and Capacitor are already allowed.
-   - `RELAY_DATA_FILE` = optional path for the accounts, match history, and saved rooms. Defaults to `server/data/store.json`.
+   - `DATABASE_URL` = Render Postgres internal URL. Leave this unset only for local play, which uses a JSON file.
+   - `RELAY_DATA_FILE` = optional JSON path used when `DATABASE_URL` is not set. Defaults to `server/data/store.json`.
 6. Note the service URL, e.g. `https://relay-d0fn.onrender.com`.
 
-The server checks every flick, keeps a 45 second reconnect window, and stores accounts plus results. On Render's free tier the disk is wiped when the instance sleeps, so set `RELAY_DATA_FILE` on a persistent disk if the ladder must survive that.
+The server checks every flick, keeps a 45 second reconnect window, and stores accounts plus results. Without `DATABASE_URL` it uses `server/data/store.json`, which a Render restart can wipe. With `DATABASE_URL` set to a Render Postgres **internal** URL, accounts, sessions, matches, and open rooms are stored in Postgres. The first boot copies an existing `store.json` if the database is empty.
+
+Paid setup: the web service instance is **0.5c-512mb** (not the free instance, and not a paid workspace plan). Postgres is the smallest paid plan, created in the same region. Do not use Render's free database.
 
 Sign-in is email and password. `POST /auth/signup`, `POST /auth/login`, and `POST /auth/logout` issue a bearer token stored in the browser. The socket sends that token with `hello`. Guests can still play, but only signed-in accounts appear on the ladder, and a copied player id cannot take over a registered account. Creating an account keeps the rating already earned on that device. Passwords are stored as scrypt hashes.
 
