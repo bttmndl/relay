@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import RelayGame from "./RelayGame.jsx";
 import RelayIntro from "./RelayIntro.jsx";
-import { getSocket, SERVER_URL, loadIdentity, saveName, saveResume, loadResume } from "./net.js";
+import { getSocket, SERVER_URL, loadIdentity, saveName, saveResume, loadResume, helloPayload, saveToken, signup, login, logout, rotateGuestId } from "./net.js";
 import { THEMES, getTheme, loadStoredThemeId, storeThemeId } from "./themes.js";
 
 export default function App() {
@@ -17,6 +17,11 @@ export default function App() {
   const [recent, setRecent] = useState([]);
   const [name, setName] = useState(() => loadIdentity().name);
   const [intro, setIntro] = useState(true);
+  const [authMode, setAuthMode] = useState(null);
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authError, setAuthError] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   const dismissIntro = useCallback(() => setIntro(false), []);
   const [themeId, setThemeId] = useState(loadStoredThemeId);
   const theme = getTheme(themeId);
@@ -32,8 +37,7 @@ export default function App() {
     const socket = getSocket();
     const onConnect = () => {
       setConnected(true);
-      const id = loadIdentity();
-      socket.emit("hello", { ...id, name: name || id.name });
+      socket.emit("hello", helloPayload(name));
       const token = loadResume();
       if (token) socket.emit("resume", { token });
     };
@@ -60,11 +64,15 @@ export default function App() {
     };
     const onError = ({ message }) => setStatus(message);
     const onProfile = (next) => setProfile(next);
-    const identify = () => {
-      const id = loadIdentity();
-      socket.emit("hello", { ...id, name: name || id.name });
-      const token = loadResume();
-      if (token) socket.emit("resume", { token });
+    const onAuthExpired = () => {
+      saveToken("");
+      setAuthError("Sign in expired. Enter your password again.");
+      setAuthMode("login");
+      socket.emit("hello", helloPayload(name));
+    };
+    const onAuthRejected = () => {
+      rotateGuestId();
+      socket.emit("hello", helloPayload(name));
     };
     socket.on("connect", onConnect);
     socket.on("disconnect", onDisconnect);
@@ -74,6 +82,8 @@ export default function App() {
     socket.on("resumed", onStart);
     socket.on("errorMsg", onError);
     socket.on("profile", onProfile);
+    socket.on("authExpired", onAuthExpired);
+    socket.on("authRejected", onAuthRejected);
     if (socket.connected) onConnect();
     return () => {
       socket.off("connect", onConnect);
@@ -84,6 +94,8 @@ export default function App() {
       socket.off("resumed", onStart);
       socket.off("errorMsg", onError);
       socket.off("profile", onProfile);
+      socket.off("authExpired", onAuthExpired);
+      socket.off("authRejected", onAuthRejected);
     };
   }, [name]);
 
@@ -110,9 +122,40 @@ export default function App() {
   };
 
   const identify = () => {
-    const id = loadIdentity();
     saveName(name);
-    getSocket().emit("hello", { ...id, name });
+    getSocket().emit("hello", helloPayload(name));
+  };
+
+  const submitAuth = async (event) => {
+    event.preventDefault();
+    setAuthBusy(true);
+    setAuthError("");
+    try {
+      const body = authMode === "signup"
+        ? { email: authEmail, password: authPassword, name, region: loadIdentity().region }
+        : { email: authEmail, password: authPassword };
+      const result = authMode === "signup" ? await signup(body) : await login(body);
+      saveToken(result.token);
+      if (result.account?.name) {
+        setName(result.account.name);
+        saveName(result.account.name);
+      }
+      setProfile(result.account);
+      setAuthPassword("");
+      setAuthMode(null);
+      getSocket().emit("hello", helloPayload(result.account?.name || name));
+    } catch (err) {
+      setAuthError(err.message || "Sign in failed");
+    } finally {
+      setAuthBusy(false);
+    }
+  };
+
+  const signOut = async () => {
+    await logout();
+    setProfile(null);
+    setAuthMode(null);
+    getSocket().emit("hello", helloPayload(name));
   };
 
   const cancelLobby = () => {
@@ -152,6 +195,46 @@ export default function App() {
     gap: 10, padding: 20, textAlign: "center",
   };
 
+  const field = {
+    fontFamily: "'Space Mono', monospace", fontSize: 13, letterSpacing: 1,
+    width: 220, textAlign: "center", background: C.panel, color: C.text,
+    border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 8px", outline: "none",
+  };
+  const accountPanel = (
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, margin: "4px 0 8px" }}>
+      {profile?.member ? (
+        <>
+          <div style={{ fontSize: 11, color: C.dim, letterSpacing: 1 }}>{profile.email}</div>
+          <button type="button" style={{ ...btn(C.panel, C.dim), width: "auto", padding: "8px 16px", fontSize: 11, boxShadow: "none" }} onClick={signOut}>LOG OUT</button>
+        </>
+      ) : (
+        <>
+          {!authMode && (
+            <button type="button" style={{ ...btn(C.panel, C.copper), width: "auto", padding: "10px 16px", fontSize: 11, boxShadow: "none" }} onClick={() => { setAuthMode("login"); setAuthError(""); }}>
+              SIGN IN TO KEEP YOUR RATING
+            </button>
+          )}
+          {authMode && (
+            <form onSubmit={submitAuth} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+              {authMode === "signup" && (
+                <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} placeholder="NAME" maxLength={16} style={field} />
+              )}
+              <input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="EMAIL" type="email" autoComplete="email" style={field} />
+              <input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="PASSWORD" type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} style={field} />
+              {authError && <div style={{ color: "#FF6A6A", fontSize: 11, maxWidth: 240 }}>{authError}</div>}
+              <button type="submit" disabled={authBusy} style={{ ...btn("#0E2415", C.volt), width: "auto", padding: "10px 16px", fontSize: 12 }}>
+                {authBusy ? "PLEASE WAIT" : authMode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
+              </button>
+              <button type="button" style={{ background: "none", border: 0, color: C.dim, fontFamily: "'Space Mono', monospace", fontSize: 11, cursor: "pointer" }} onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); }}>
+                {authMode === "login" ? "New here? Create an account" : "Already registered? Sign in"}
+              </button>
+            </form>
+          )}
+        </>
+      )}
+    </div>
+  );
+
   const frame = (node) => node;
 
   if (screen === "game" && session) {
@@ -175,18 +258,17 @@ export default function App() {
         <div style={{ fontSize: 11, color: connected ? C.volt : "#FF6A6A", letterSpacing: 1 }}>
           {connected ? `● SERVER CONNECTED${profile ? ` · ${profile.rating}` : ""}` : "● CONNECTING TO SERVER…"}
         </div>
+        {accountPanel}
+        {!profile?.member && (
         <input
           value={name}
           onChange={(e) => setName(e.target.value.slice(0, 16))}
           onBlur={identify}
           placeholder="YOUR NAME"
           maxLength={16}
-          style={{
-            fontFamily: "'Space Mono', monospace", fontSize: 14, letterSpacing: 2,
-            width: 220, textAlign: "center", background: C.panel, color: C.text,
-            border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 8px", outline: "none",
-          }}
+          style={field}
         />
+        )}
         <div style={{ height: 10 }} />
 
         <button style={btn("#0E2415", C.volt)} onClick={() => { identify(); setStatus("Searching for a rival…"); getSocket().emit("quickMatch"); }}>
@@ -267,6 +349,7 @@ export default function App() {
         16 pucks are neutral, plus one <b style={{ color: "#D6203F" }}>queen</b> worth 5 points in the center. The puck you flick is your <b style={{ color: C.hot }}>striker</b> — everything it touches gets charged your color. Pot a charged puck = 1 point + <b style={{ color: C.volt }}>shoot again</b>, 3 in a row banks a bonus point. Sink your striker = <b style={{ color: "#FF6A6A" }}>point to your rival</b>. If the queen is knocked off her spot, she reappears on the hardest open point.
         <br /><b style={{ color: C.text }}>Most banked wins — the match ends the moment it's decided.</b>
       </p>
+      {accountPanel}
       <button style={btn("#0E2415", C.volt)} onClick={() => setScreen("online")}>PLAY ONLINE</button>
       <button style={btn("#241708", C.amp)} onClick={() => startLocal("ai")}>PLAY VS AI</button>
       <button style={{ ...btn(C.panel, C.text), boxShadow: "none", border: `1px solid ${C.line}` }} onClick={() => startLocal("pvp")}>PASS &amp; PLAY</button>

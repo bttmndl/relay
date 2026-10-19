@@ -39,3 +39,52 @@ export function loadResume() {
   return sessionStorage.getItem(RESUME_KEY);
 }
 
+const TOKEN_KEY = "relay-session";
+
+export function loadToken() {
+  return localStorage.getItem(TOKEN_KEY) || "";
+}
+
+export function saveToken(token) {
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+export function rotateGuestId() {
+  localStorage.removeItem(ID_KEY);
+  return loadIdentity().playerId;
+}
+
+export function helloPayload(name) {
+  const id = loadIdentity();
+  return { ...id, name: name || id.name, token: loadToken() };
+}
+
+async function postAuth(path, body, token = loadToken()) {
+  const headers = { "Content-Type": "application/json" };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(`${SERVER_URL}${path}`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body || {}),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || "Sign in failed");
+  return data;
+}
+
+export function signup(body) {
+  return postAuth("/auth/signup", { ...body, guestId: loadIdentity().playerId });
+}
+
+export function login(body) {
+  return postAuth("/auth/login", body);
+}
+
+export function logout() {
+  const token = loadToken();
+  saveToken("");
+  if (!token) return Promise.resolve();
+  return postAuth("/auth/logout", {}, token).catch(() => {});
+}
+

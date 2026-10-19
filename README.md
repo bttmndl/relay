@@ -44,6 +44,8 @@ Open two browser windows on `localhost:5173` → PLAY ONLINE → Create Room in 
 
 The server checks every flick, keeps a 45 second reconnect window, and stores accounts plus results. On Render's free tier the disk is wiped when the instance sleeps, so set `RELAY_DATA_FILE` on a persistent disk if the ladder must survive that.
 
+Sign-in is email and password. `POST /auth/signup`, `POST /auth/login`, and `POST /auth/logout` issue a bearer token stored in the browser. The socket sends that token with `hello`. Guests can still play, but only signed-in accounts appear on the ladder, and a copied player id cannot take over a registered account. Creating an account keeps the rating already earned on that device. Passwords are stored as scrypt hashes.
+
 Free-tier note: Render free instances sleep after inactivity; the first connection after a sleep takes ~30–50s. The client shows "CONNECTING TO SERVER…" until the socket is up.
 
 ### Client → Vercel

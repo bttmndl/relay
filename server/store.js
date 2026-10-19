@@ -1,7 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import crypto from "node:crypto";
+import { newToken, tokenHash, SESSION_MS } from "./auth.js";
 
-const EMPTY = () => ({ accounts: {}, matches: [], rooms: [] });
+const EMPTY = () => ({ accounts: {}, matches: [], rooms: [], sessions: {} });
 
 export function createStore(file) {
   const data = EMPTY();
@@ -13,6 +15,7 @@ export function createStore(file) {
       data.accounts = parsed.accounts && typeof parsed.accounts === "object" ? parsed.accounts : {};
       data.matches = Array.isArray(parsed.matches) ? parsed.matches : [];
       data.rooms = Array.isArray(parsed.rooms) ? parsed.rooms : [];
+      data.sessions = parsed.sessions && typeof parsed.sessions === "object" ? parsed.sessions : {};
     } catch (err) {
       if (err.code !== "ENOENT") throw err;
     }
@@ -33,6 +36,9 @@ export function createStore(file) {
     data,
     count: () => Object.keys(data.accounts).length,
     get: (id) => data.accounts[id] || null,
+    findByEmail(email) {
+      return Object.values(data.accounts).find((account) => account.email === email) || null;
+    },
     upsert(input) {
       const id = String(input.playerId || "");
       if (!id) throw new Error("playerId required");
@@ -48,12 +54,67 @@ export function createStore(file) {
         losses: prev?.losses ?? 0,
         draws: prev?.draws ?? 0,
         played: prev?.played ?? 0,
+        email: prev?.email || null,
+        passwordHash: prev?.passwordHash || null,
         createdAt: prev?.createdAt ?? now,
         updatedAt: now,
       };
       data.accounts[id] = account;
       save();
       return account;
+    },
+    register({ email, passwordHash, name, region, guestId }) {
+      if (this.findByEmail(email)) {
+        const err = new Error("That email is already registered");
+        err.status = 409;
+        throw err;
+      }
+      const guest = guestId && data.accounts[guestId] && !data.accounts[guestId].email
+        ? data.accounts[guestId]
+        : null;
+      const now = Date.now();
+      const id = crypto.randomUUID();
+      const account = {
+        id,
+        email,
+        passwordHash,
+        name: cleanName(name, guest?.name, id),
+        region: cleanRegion(region || guest?.region),
+        rating: guest?.rating ?? 1000,
+        wins: guest?.wins ?? 0,
+        losses: guest?.losses ?? 0,
+        draws: guest?.draws ?? 0,
+        played: guest?.played ?? 0,
+        createdAt: guest?.createdAt ?? now,
+        updatedAt: now,
+      };
+      if (guest) delete data.accounts[guest.id];
+      data.accounts[id] = account;
+      save();
+      return account;
+    },
+    openSession(accountId) {
+      const token = newToken();
+      data.sessions[tokenHash(token)] = { accountId, expiresAt: Date.now() + SESSION_MS };
+      save();
+      return token;
+    },
+    accountForToken(token) {
+      if (!token) return null;
+      const key = tokenHash(token);
+      const row = data.sessions[key];
+      if (!row) return null;
+      if (row.expiresAt <= Date.now()) {
+        delete data.sessions[key];
+        save();
+        return null;
+      }
+      return data.accounts[row.accountId] || null;
+    },
+    revoke(token) {
+      if (!token) return;
+      delete data.sessions[tokenHash(token)];
+      save();
     },
     recordMatch({ players, winner, roomCode }) {
       const at = Date.now();
@@ -95,6 +156,7 @@ export function createStore(file) {
     },
     leaderboard(limit = 20) {
       return Object.values(data.accounts)
+        .filter((account) => account.email)
         .sort((a, b) => b.rating - a.rating || b.wins - a.wins || a.name.localeCompare(b.name))
         .slice(0, limit)
         .map(publicAccount);
@@ -114,8 +176,13 @@ export function createStore(file) {
 
 export function publicAccount(account) {
   if (!account) return null;
-  const { id, name, region, rating, wins, losses, draws, played } = account;
-  return { id, name, region, rating, wins, losses, draws, played };
+  const { id, name, region, rating, wins, losses, draws, played, email } = account;
+  return { id, name, region, rating, wins, losses, draws, played, member: !!email };
+}
+
+export function selfAccount(account) {
+  if (!account) return null;
+  return { ...publicAccount(account), email: account.email || null };
 }
 
 export function cleanName(name, previous, id) {

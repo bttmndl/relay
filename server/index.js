@@ -6,7 +6,8 @@ import express from "express";
 import cors from "cors";
 import { Server } from "socket.io";
 import { serialize } from "../client/src/engine.js";
-import { createStore, publicAccount } from "./store.js";
+import { createStore, selfAccount } from "./store.js";
+import { normalizeEmail, passwordError, hashPassword, verifyPassword, identityFromHello } from "./auth.js";
 import {
   GRACE_MS, corsOrigin, allow, enqueue, pair, newRoom, restoreRoom, exportRoom,
   attemptFlick, sweep, log,
@@ -34,6 +35,7 @@ for (const saved of store.loadRooms()) {
 const app = express();
 const checkOrigin = corsOrigin(ORIGIN);
 app.use(cors({ origin: checkOrigin }));
+app.use(express.json({ limit: "20kb" }));
 app.get("/", (_req, res) => {
   res.json({ ok: true, game: "relay", rooms: rooms.size, accounts: store.count() });
 });
@@ -43,6 +45,62 @@ app.get("/leaderboard", (req, res) => {
     return res.status(429).json({ error: "Slow down" });
   }
   res.json({ leaders: store.leaderboard(20), recent: store.recent(8) });
+});
+
+function bearer(req) {
+  const header = req.headers.authorization || "";
+  return header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+}
+
+function authLimited(req, res) {
+  if (allow(hits, `auth:${req.ip}`, 10, 60_000, Date.now())) return false;
+  res.status(429).json({ error: "Slow down" });
+  return true;
+}
+
+app.post("/auth/signup", (req, res) => {
+  if (authLimited(req, res)) return;
+  const email = normalizeEmail(req.body?.email);
+  const problem = passwordError(req.body?.password);
+  if (!email) return res.status(400).json({ error: "Enter a valid email" });
+  if (problem) return res.status(400).json({ error: problem });
+  try {
+    const guestId = String(req.body?.guestId || "");
+    const account = store.register({
+      email,
+      passwordHash: hashPassword(req.body.password),
+      name: req.body?.name,
+      region: req.body?.region,
+      guestId,
+    });
+    if (guestId && guestId !== account.id) rebindPlayer(guestId, account);
+    const token = store.openSession(account.id);
+    res.json({ token, account: selfAccount(account) });
+  } catch (err) {
+    res.status(err.status || 400).json({ error: err.message || "Could not create the account" });
+  }
+});
+
+app.post("/auth/login", (req, res) => {
+  if (authLimited(req, res)) return;
+  const email = normalizeEmail(req.body?.email);
+  const account = email && store.findByEmail(email);
+  if (!account || !verifyPassword(req.body?.password, account.passwordHash)) {
+    return res.status(401).json({ error: "Email or password is wrong" });
+  }
+  const token = store.openSession(account.id);
+  res.json({ token, account: selfAccount(account) });
+});
+
+app.post("/auth/logout", (req, res) => {
+  store.revoke(bearer(req));
+  res.json({ ok: true });
+});
+
+app.get("/auth/me", (req, res) => {
+  const account = store.accountForToken(bearer(req));
+  if (!account) return res.status(401).json({ error: "Sign in expired" });
+  res.json({ account: selfAccount(account) });
 });
 
 const server = http.createServer(app);
@@ -92,7 +150,7 @@ function sendProfile(socket) {
   if (!socket?.data?.account) return;
   const fresh = store.get(socket.data.account.id) || socket.data.account;
   socket.data.account = fresh;
-  socket.emit("profile", publicAccount(fresh));
+  socket.emit("profile", selfAccount(fresh));
 }
 
 function inLiveMatch(playerId) {
@@ -200,17 +258,35 @@ function leave(socket, { forfeit = false } = {}) {
   log("info", "disconnect grace", { code: room.code, playerId: player.playerId, graceMs: GRACE_MS });
 }
 
+function rebindPlayer(fromId, account) {
+  for (const room of rooms.values()) {
+    for (const player of room.players) {
+      if (player.playerId !== fromId) continue;
+      player.playerId = account.id;
+      player.name = account.name;
+      player.rating = account.rating;
+    }
+  }
+  queue.forEach((item) => {
+    if (item.playerId !== fromId) return;
+    item.playerId = account.id;
+    item.name = account.name;
+    item.rating = account.rating;
+  });
+  persistRooms();
+}
+
 io.on("connection", (socket) => {
   log("info", "connect", { socket: socket.id });
 
   socket.on("hello", (body = {}) => {
     if (!limited(socket, "hello", 10, 30_000)) return;
-    const account = store.upsert({
-      playerId: String(body.playerId || accountOf(socket).id),
-      name: body.name,
-      region: body.region,
-    });
-    socket.data.account = account;
+    const result = identityFromHello(store, body);
+    if (result.error) {
+      socket.emit(result.code === "expired" ? "authExpired" : "authRejected", { message: result.error });
+      return;
+    }
+    socket.data.account = result.account;
     sendProfile(socket);
   });
 

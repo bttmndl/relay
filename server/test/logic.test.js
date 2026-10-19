@@ -96,7 +96,17 @@ test("accounts, matches, and rooms survive a reload", () => {
   const again = createStore(file);
   assert.equal(again.get("aaa").wins, 1);
   assert.ok(again.get("aaa").rating > again.get("bbb").rating);
-  assert.equal(again.leaderboard(2)[0].id, "aaa");
+  assert.equal(again.leaderboard(2).length, 0);
+  const member = again.register({
+    email: "volt@relaypuck.com",
+    passwordHash: "scrypt$salt$hash",
+    name: "Volt",
+    region: "Asia/Kolkata",
+    guestId: "aaa",
+  });
+  assert.equal(member.wins, 1);
+  assert.equal(again.get("aaa"), null);
+  assert.equal(again.leaderboard(2)[0].id, member.id);
   const restored = restoreRoom(again.loadRooms()[0]);
   assert.equal(restored.code, "ABC123");
   assert.equal(restored.players[0].resumeToken, "t0");
