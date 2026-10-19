@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import RelayGame from "./RelayGame.jsx";
+import RelayIntro from "./RelayIntro.jsx";
 import { getSocket, SERVER_URL, loadIdentity, saveName, saveResume, loadResume } from "./net.js";
 import { THEMES, getTheme, loadStoredThemeId, storeThemeId } from "./themes.js";
 
@@ -15,6 +16,8 @@ export default function App() {
   const [leaders, setLeaders] = useState([]);
   const [recent, setRecent] = useState([]);
   const [name, setName] = useState(() => loadIdentity().name);
+  const [intro, setIntro] = useState(true);
+  const dismissIntro = useCallback(() => setIntro(false), []);
   const [themeId, setThemeId] = useState(loadStoredThemeId);
   const theme = getTheme(themeId);
   const C = {
@@ -148,8 +151,15 @@ export default function App() {
     gap: 10, padding: 20, textAlign: "center",
   };
 
+  const frame = (node) => (
+    <>
+      {node}
+      {intro && <RelayIntro onDone={dismissIntro} />}
+    </>
+  );
+
   if (screen === "game" && session) {
-    return (
+    return frame(
       <RelayGame
         key={session.nonce}
         mode={mode}
@@ -161,7 +171,7 @@ export default function App() {
   }
 
   if (screen === "online") {
-    return (
+    return frame(
       <div style={page}>
         <h2 style={{ fontFamily: "'Audiowide', sans-serif", letterSpacing: 4, fontSize: 22, margin: 0 }}>
           <span style={{ color: C.volt }}>ONLINE</span> <span style={{ color: C.amp }}>1V1</span>
@@ -243,7 +253,7 @@ export default function App() {
   }
 
   // ---------------- main menu ----------------
-  return (
+  return frame(
     <div style={page}>
       <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 11, letterSpacing: 5, color: C.dim }}>
         NOTHING IS YOURS UNTIL IT MOVES
