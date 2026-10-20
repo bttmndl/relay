@@ -88,7 +88,10 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   const [turnToken, setTurnToken] = useState(0); // bumped whenever the shot clock resets, to restart its border animation
   const [linkNote, setLinkNote] = useState(null);
 
+  const nameRefs = useRef([]);
   const canvasRef = useRef(null);
+  const [flies, setFlies] = useState([]);
+  const [nameFlash, setNameFlash] = useState([0, 0]);
   const G = useRef(null);
   const sfx = useRef(null);
   const arcs = useRef([]);
@@ -99,6 +102,35 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   const say = (text, col, ms = 1400) => {
     setCallout({ text, col });
     setTimeout(() => setCallout(null), ms);
+  };
+
+  const spawnScoreFly = (player, pts, x, y, color) => {
+    const canvas = canvasRef.current;
+    const root = rootRef.current;
+    const nameEl = nameRefs.current[player];
+    const g = G.current;
+    if (!canvas || !root || !nameEl || !g || x == null || y == null) return;
+    const cr = canvas.getBoundingClientRect();
+    const rr = root.getBoundingClientRect();
+    const nr = nameEl.getBoundingClientRect();
+    const scale = cr.width / g.S;
+    const fromX = cr.left - rr.left + x * scale;
+    const fromY = cr.top - rr.top + y * scale;
+    const id = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    setFlies((list) => [...list, {
+      id, pts, color,
+      x: fromX, y: fromY,
+      dx: nr.left - rr.left + nr.width / 2 - fromX,
+      dy: nr.top - rr.top + nr.height / 2 - fromY,
+    }]);
+    setTimeout(() => {
+      setFlies((list) => list.filter((f) => f.id !== id));
+      setNameFlash((flash) => {
+        const next = [...flash];
+        next[player] = (next[player] || 0) + 1;
+        return next;
+      });
+    }, 680);
   };
 
   // ---------------- init ----------------
@@ -201,9 +233,16 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       if (e.t === "flick") sfx.current?.flick();
       else if (e.t === "hit") sfx.current?.hit(e.v);
       else if (e.t === "charge") { arcs.current.push({ ...e, t: 1 }); sfx.current?.charge(); }
-      else if (e.t === "pot") { sfx.current?.pot(); setScores([...g.scores]); }
+      else if (e.t === "pot" || e.t === "queenPot") {
+        if (e.t === "pot") sfx.current?.pot();
+        else sfx.current?.win();
+        setScores([...g.scores]);
+        spawnScoreFly(e.player, e.pts || 1, e.x, e.y, e.t === "queenPot" ? theme.canvas.queen : players[e.player]);
+        if (e.t === "queenPot") say(`QUEEN! +${e.pts || QUEEN_POINTS}`, theme.canvas.queen, 1800);
+      }
       else if (e.t === "poison") {
         sfx.current?.poison(); setScores([...g.scores]);
+        spawnScoreFly(e.player, e.pts || 1, e.x, e.y, players[e.player]);
         say("POISON! STRIKER SUNK", players[e.player], 1500);
       }
       else if (e.t === "deadPort") {
@@ -215,10 +254,6 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         } else {
           say("PORT OFFLINE — RETURNED", "#FF6A6A", 1400);
         }
-      }
-      else if (e.t === "queenPot") {
-        sfx.current?.win(); setScores([...g.scores]);
-        say(`QUEEN! +${QUEEN_POINTS}`, theme.canvas.queen, 1800);
       }
       else if (e.t === "queenShift") say("QUEEN RESET", theme.canvas.queen, 1200);
       else if (e.t === "turnTimeout") {
@@ -889,9 +924,14 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   };
 
   return (
-    <div ref={rootRef} style={{ minHeight: "100dvh", width: "100%", background: `linear-gradient(180deg, ${C.board}, ${C.boardDeep})`, color: C.text, fontFamily: "'Space Mono', monospace", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 0", userSelect: "none", WebkitUserSelect: "none", boxSizing: "border-box" }}>
+    <div ref={rootRef} style={{ position: "relative", minHeight: "100dvh", width: "100%", background: `linear-gradient(180deg, ${C.board}, ${C.boardDeep})`, color: C.text, fontFamily: "'Space Mono', monospace", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 0", userSelect: "none", WebkitUserSelect: "none", boxSizing: "border-box" }}>
       <style>{`
-        @keyframes rlIn { from{opacity:0; transform:scale(.85)} to{opacity:1; transform:scale(1)} }
+        @keyframes rlInfuse { 0%{transform:scale(1)} 40%{transform:scale(1.28)} 100%{transform:scale(1)} }
+        @keyframes rlScore {
+          0%{opacity:0; transform:translate(-50%,-50%) scale(.4)}
+          16%{opacity:1; transform:translate(-50%,-50%) scale(1.25)}
+          100%{opacity:0; transform:translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(.15)}
+        }
         @keyframes rlPulse { 0%,100%{opacity:.55} 50%{opacity:1} }
         @keyframes rlCall { 0%{opacity:0; transform:translateX(-50%) scale(.7)} 15%{opacity:1; transform:translateX(-50%) scale(1.08)} 30%{transform:translateX(-50%) scale(1)} 80%{opacity:1} 100%{opacity:0; transform:translateX(-50%) translateY(-12px)} }
         @keyframes rlEmote {
@@ -904,11 +944,22 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         @media (prefers-reduced-motion: reduce){ *{animation:none !important} }
       `}</style>
 
-      {/* HUD */}
+      {flies.map((fx) => (
+        <div
+          key={fx.id}
+          style={{
+            position: "absolute", left: fx.x, top: fx.y, zIndex: 40, pointerEvents: "none",
+            color: fx.color, fontFamily: "'Audiowide', sans-serif", fontSize: 22, letterSpacing: 1,
+            textShadow: `0 0 16px ${fx.color}`,
+            animation: "rlScore 680ms cubic-bezier(.22,.8,.2,1) forwards",
+            "--dx": `${fx.dx}px`, "--dy": `${fx.dy}px`,
+          }}
+        >+{fx.pts}</div>
+      ))}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", maxWidth: size, padding: "4px 4px 8px", gap: 8 }}>
         {[0, 1].map((p) => (
           <div key={p} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "8px 14px", borderRadius: 10, background: C.panel, border: `1px solid ${turn === p && winner === null ? players[p] : C.line}`, boxShadow: turn === p && winner === null ? `0 0 14px ${players[p]}44` : "none", minWidth: 88, position: "relative", overflow: "visible" }}>
-            <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 8, letterSpacing: 1.5, color: players[p], whiteSpace: "nowrap" }}>{nameFor(p)}</div>
+            <div ref={(el) => { nameRefs.current[p] = el; }} key={`name-${p}-${nameFlash[p] || 0}`} style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 8, letterSpacing: 1.5, color: players[p], whiteSpace: "nowrap", animation: nameFlash[p] ? "rlInfuse 420ms ease-out" : undefined, textShadow: nameFlash[p] ? `0 0 12px ${players[p]}` : "none" }}>{nameFor(p)}</div>
             <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 24, color: players[p] }}>{scores[p]}</div>
             {emoteFx && emoteFx.side === p && (
               <div key={emoteFx.key} style={{ position: "absolute", top: -18, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>

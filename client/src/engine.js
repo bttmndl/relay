@@ -310,14 +310,14 @@ export function stepGame(g, ev) {
           g.poisonThisShot = true;
           const opp = 1 - g.turn;
           g.scores[opp]++;
-          ev.push({ t: "poison", player: opp });
+          ev.push({ t: "poison", player: opp, pts: 1, x: pk.x, y: pk.y });
         } else {
           p.sink = { px: pk.x, py: pk.y, s: 1 };
           const scorer = p.charge !== null ? p.charge : g.turn;
           const pts = p.isQueen ? QUEEN_POINTS : 1;
           g.potsThisShot++;
           g.scores[scorer] += pts;
-          ev.push({ t: p.isQueen ? "queenPot" : "pot", player: scorer, pts });
+          ev.push({ t: p.isQueen ? "queenPot" : "pot", player: scorer, pts, x: pk.x, y: pk.y });
         }
         break;
       }
