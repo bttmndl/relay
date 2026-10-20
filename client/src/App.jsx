@@ -196,9 +196,9 @@ export default function App() {
   };
 
   const field = {
-    fontFamily: "'Space Mono', monospace", fontSize: 13, letterSpacing: 1,
-    width: 220, textAlign: "center", background: C.panel, color: C.text,
-    border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 8px", outline: "none",
+    fontFamily: "'Space Mono', monospace", fontSize: 14, letterSpacing: 0.5,
+    width: "100%", textAlign: "left", background: C.boardDeep, color: C.text,
+    border: `1px solid ${C.line}`, borderRadius: 10, padding: "12px 12px", outline: "none",
   };
   const accountPanel = (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8, margin: "4px 0 8px" }}>
@@ -208,29 +208,73 @@ export default function App() {
           <button type="button" style={{ ...btn(C.panel, C.dim), width: "auto", padding: "8px 16px", fontSize: 11, boxShadow: "none" }} onClick={signOut}>LOG OUT</button>
         </>
       ) : (
-        <>
-          {!authMode && (
-            <button type="button" style={{ ...btn(C.panel, C.copper), width: "auto", padding: "10px 16px", fontSize: 11, boxShadow: "none" }} onClick={() => { setAuthMode("login"); setAuthError(""); }}>
-              SIGN IN TO KEEP YOUR RATING
+        <button type="button" style={{ ...btn(C.panel, C.copper), width: "auto", padding: "10px 16px", fontSize: 11, boxShadow: "none" }} onClick={() => { setAuthMode("login"); setAuthError(""); }}>
+          SIGN IN
+        </button>
+      )}
+      {authMode && (
+        <div
+          onClick={() => setAuthMode(null)}
+          style={{
+            position: "fixed", inset: 0, zIndex: 90,
+            background: "rgba(0,0,0,0.72)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+            padding: 18,
+          }}
+        >
+          <form
+            onSubmit={submitAuth}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "min(360px, 100%)",
+              background: C.panel,
+              color: C.text,
+              border: `1px solid ${C.line}`,
+              borderRadius: 18,
+              padding: "22px 20px 20px",
+              boxShadow: "0 24px 60px rgba(0,0,0,0.45)",
+              display: "flex", flexDirection: "column", gap: 12,
+              textAlign: "left",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+              <div style={{ fontFamily: "'Audiowide', sans-serif", letterSpacing: 3, fontSize: 16 }}>
+                <span style={{ color: C.volt }}>RE</span><span style={{ color: C.amp }}>LAY</span>
+              </div>
+              <button type="button" onClick={() => setAuthMode(null)} aria-label="Close" style={{ background: "none", border: 0, color: C.dim, fontSize: 22, lineHeight: 1, cursor: "pointer", padding: 4 }}>×</button>
+            </div>
+            <div style={{ display: "flex", borderBottom: `1px solid ${C.line}` }}>
+              {[["login", "SIGN IN"], ["signup", "SIGN UP"]].map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  onClick={() => { setAuthMode(id); setAuthError(""); }}
+                  style={{
+                    flex: 1, background: "none", border: 0, cursor: "pointer",
+                    padding: "10px 0 8px",
+                    fontFamily: "'Audiowide', sans-serif", fontSize: 12, letterSpacing: 2,
+                    color: authMode === id ? C.hot : C.dim,
+                    borderBottom: `2px solid ${authMode === id ? C.copper : "transparent"}`,
+                  }}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <div style={{ fontSize: 11, color: C.dim, letterSpacing: 0.4, lineHeight: 1.5 }}>
+              {authMode === "signup" ? "Create an account to keep the rating on this device." : "Sign in to put this rating on the ladder."}
+            </div>
+            {authMode === "signup" && (
+              <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} placeholder="Name" maxLength={16} autoComplete="nickname" style={field} />
+            )}
+            <input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="Email" type="email" autoComplete="email" style={field} />
+            <input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="Password" type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} style={field} />
+            {authError && <div style={{ color: "#FF6A6A", fontSize: 12, lineHeight: 1.4 }}>{authError}</div>}
+            <button type="submit" disabled={authBusy} style={{ ...btn("#0E2415", C.volt), width: "100%", marginTop: 4 }}>
+              {authBusy ? "PLEASE WAIT" : authMode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
             </button>
-          )}
-          {authMode && (
-            <form onSubmit={submitAuth} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
-              {authMode === "signup" && (
-                <input value={name} onChange={(e) => setName(e.target.value.slice(0, 16))} placeholder="NAME" maxLength={16} style={field} />
-              )}
-              <input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="EMAIL" type="email" autoComplete="email" style={field} />
-              <input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="PASSWORD" type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} style={field} />
-              {authError && <div style={{ color: "#FF6A6A", fontSize: 11, maxWidth: 240 }}>{authError}</div>}
-              <button type="submit" disabled={authBusy} style={{ ...btn("#0E2415", C.volt), width: "auto", padding: "10px 16px", fontSize: 12 }}>
-                {authBusy ? "PLEASE WAIT" : authMode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
-              </button>
-              <button type="button" style={{ background: "none", border: 0, color: C.dim, fontFamily: "'Space Mono', monospace", fontSize: 11, cursor: "pointer" }} onClick={() => { setAuthMode(authMode === "login" ? "signup" : "login"); setAuthError(""); }}>
-                {authMode === "login" ? "New here? Create an account" : "Already registered? Sign in"}
-              </button>
-            </form>
-          )}
-        </>
+          </form>
+        </div>
       )}
     </div>
   );
@@ -266,7 +310,7 @@ export default function App() {
           onBlur={identify}
           placeholder="YOUR NAME"
           maxLength={16}
-          style={field}
+          style={{ ...field, width: 220, textAlign: "center" }}
         />
         )}
         <div style={{ height: 10 }} />
