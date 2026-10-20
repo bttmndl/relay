@@ -376,7 +376,10 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           for (let j = 0; j < g.pucks.length; j++) {
             const o = g.pucks[j];
             if (j === d0.idx || !o.alive || o.sink) continue;
-            if (Math.hypot(o.x - sx, o.y - sy) < R * 2) { hit = { x: sx, y: sy }; break; }
+            if (Math.hypot(o.x - sx, o.y - sy) < R * 2) {
+              hit = { x: sx, y: sy, ox: o.x, oy: o.y, svx, svy, queen: !!o.isQueen };
+              break;
+            }
           }
           if (k % 2 === 0) ctx.lineTo(sx, sy);
           if (hit || Math.hypot(svx, svy) < 0.15) break;
@@ -401,11 +404,42 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           ctx.textBaseline = "middle";
           ctx.fillText("⊘", reject.x, reject.y);
         } else if (hit) {
+          const dx = hit.ox - hit.x, dy = hit.oy - hit.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          const hx = dx / dist, hy = dy / dist;
+          const along = hit.svx * hx + hit.svy * hy;
+          const imp = Math.max(0, along) * 0.93;
+          const aimArrow = (x, y, vx, vy, color, len) => {
+            const sp = Math.hypot(vx, vy);
+            if (sp < 0.04) return;
+            const ux = vx / sp, uy = vy / sp;
+            const x2 = x + ux * len, y2 = y + uy * len;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.lineTo(x2, y2);
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.setLineDash([3, 4]);
+            ctx.lineDashOffset = -pulse * 10;
+            ctx.stroke();
+            ctx.setLineDash([]);
+            ctx.lineDashOffset = 0;
+            const px = -uy, py = ux;
+            ctx.beginPath();
+            ctx.moveTo(x2, y2);
+            ctx.lineTo(x2 - ux * 8 + px * 4.5, y2 - uy * 8 + py * 4.5);
+            ctx.lineTo(x2 - ux * 8 - px * 4.5, y2 - uy * 8 - py * 4.5);
+            ctx.closePath();
+            ctx.fillStyle = color;
+            ctx.fill();
+          };
           ctx.beginPath();
-          ctx.arc(hit.x, hit.y, R * 0.7, 0, Math.PI * 2);
+          ctx.arc(hit.x, hit.y, R * 0.55, 0, Math.PI * 2);
           ctx.strokeStyle = C.hot;
           ctx.lineWidth = 1.5;
           ctx.stroke();
+          aimArrow(hit.ox, hit.oy, hx * imp, hy * imp, hit.queen ? theme.canvas.queen : "#F4FFF0", R * 2.6);
+          aimArrow(hit.x, hit.y, hit.svx - hx * imp, hit.svy - hy * imp, `${players[g.turn]}CC`, R * 1.7);
         }
         const breathe = 0.5 + 0.5 * Math.sin(pulse * 5);
         const gap = R + 8 + breathe * 3;
