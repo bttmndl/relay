@@ -383,9 +383,11 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         }
         ctx.strokeStyle = doom ? "rgba(255,80,80,0.9)" : reject ? "rgba(255,160,46,0.85)" : `${players[g.turn]}AA`;
         ctx.lineWidth = 2;
-        ctx.setLineDash([5, 6]);
+        ctx.setLineDash([5, 8]);
+        ctx.lineDashOffset = -pulse * 14;
         ctx.stroke();
         ctx.setLineDash([]);
+        ctx.lineDashOffset = 0;
         if (doom) {
           ctx.fillStyle = "rgba(255,80,80,0.95)";
           ctx.font = `700 ${Math.round(R * 1.1)}px 'Space Mono', monospace`;
@@ -405,12 +407,54 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           ctx.lineWidth = 1.5;
           ctx.stroke();
         }
+        const breathe = 0.5 + 0.5 * Math.sin(pulse * 5);
+        const gap = R + 8 + breathe * 3;
+        const stickLen = R * 2.4 + pow * 0.9;
+        const back = ang + Math.PI;
+        const tipX = pk.x + Math.cos(back) * gap;
+        const tipY = pk.y + Math.sin(back) * gap;
+        const buttX = pk.x + Math.cos(back) * (gap + stickLen);
+        const buttY = pk.y + Math.sin(back) * (gap + stickLen);
+        ctx.save();
+        ctx.lineCap = "round";
+        ctx.shadowColor = players[g.turn];
+        ctx.shadowBlur = 6 + breathe * 10;
+        const shaft = ctx.createLinearGradient(buttX, buttY, tipX, tipY);
+        shaft.addColorStop(0, "#2A1A10");
+        shaft.addColorStop(0.55, "#C4894A");
+        shaft.addColorStop(0.86, "#F3E6CC");
+        shaft.addColorStop(1, players[g.turn]);
         ctx.beginPath();
-        ctx.moveTo(pk.x, pk.y);
-        ctx.lineTo(pk.x - Math.cos(ang) * pow * 0.5, pk.y - Math.sin(ang) * pow * 0.5);
-        ctx.strokeStyle = `${players[g.turn]}55`;
-        ctx.lineWidth = 4;
+        ctx.moveTo(buttX, buttY);
+        ctx.lineTo(tipX, tipY);
+        ctx.strokeStyle = shaft;
+        ctx.lineWidth = Math.max(5, R * 0.42);
         ctx.stroke();
+        ctx.shadowBlur = 0;
+        ctx.beginPath();
+        ctx.arc(tipX, tipY, Math.max(2.4, R * 0.18), 0, Math.PI * 2);
+        ctx.fillStyle = "#F4FFF0";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(buttX, buttY, Math.max(3.2, R * 0.26), 0, Math.PI * 2);
+        ctx.fillStyle = "#1A120C";
+        ctx.fill();
+        const nx = -Math.sin(ang);
+        const ny = Math.cos(ang);
+        for (let c = 0; c < 2; c++) {
+          const u = ((pulse * 0.18 + c * 0.5) % 1);
+          const cx = pk.x + Math.cos(ang) * (R * 1.6 + u * pow * 0.55);
+          const cy = pk.y + Math.sin(ang) * (R * 1.6 + u * pow * 0.55);
+          ctx.globalAlpha = 0.35 + 0.45 * (1 - u);
+          ctx.beginPath();
+          ctx.moveTo(cx + Math.cos(ang) * 7, cy + Math.sin(ang) * 7);
+          ctx.lineTo(cx + nx * 5, cy + ny * 5);
+          ctx.lineTo(cx - nx * 5, cy - ny * 5);
+          ctx.closePath();
+          ctx.fillStyle = players[g.turn];
+          ctx.fill();
+        }
+        ctx.restore();
       }
     }
 
@@ -483,11 +527,14 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       ctx.fill();
       ctx.globalAlpha = 1;
       if (drag.current && drag.current.idx === i) {
+        const ring = rad + 4 + Math.sin(pulse * 5) * 2.5;
         ctx.beginPath();
-        ctx.arc(0, 0, rad + 5, 0, Math.PI * 2);
+        ctx.arc(0, 0, ring, 0, Math.PI * 2);
         ctx.strokeStyle = C.hot;
-        ctx.lineWidth = 1.5;
+        ctx.globalAlpha = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(pulse * 5));
+        ctx.lineWidth = 1.6;
         ctx.stroke();
+        ctx.globalAlpha = 1;
       }
       if (isQueenVisible && !p.sink) {
         ctx.beginPath();
