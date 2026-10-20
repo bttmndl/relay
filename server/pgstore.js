@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import crypto from "node:crypto";
 import pg from "pg";
-import { newToken, tokenHash, SESSION_MS } from "./auth.js";
+import { newToken, tokenHash, SESSION_MS, EMAIL_TAKEN } from "./auth.js";
 import { cleanName, cleanRegion } from "./store.js";
 
 const { Pool } = pg;
@@ -18,9 +18,11 @@ CREATE TABLE IF NOT EXISTS accounts (
   played INTEGER NOT NULL,
   email TEXT UNIQUE,
   password_hash TEXT,
+  google_sub TEXT,
   created_at BIGINT NOT NULL,
   updated_at BIGINT NOT NULL
 );
+CREATE UNIQUE INDEX IF NOT EXISTS accounts_email_lower_idx ON accounts (lower(email)) WHERE email IS NOT NULL;
 CREATE TABLE IF NOT EXISTS sessions (
   token_hash TEXT PRIMARY KEY,
   account_id TEXT NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
@@ -54,6 +56,7 @@ function accountFrom(row) {
     played: row.played,
     email: row.email,
     passwordHash: row.password_hash,
+    googleSub: row.google_sub,
     createdAt: Number(row.created_at),
     updatedAt: Number(row.updated_at),
   };
@@ -122,6 +125,8 @@ async function importJson(pool, file) {
 export async function createPgStore(connectionString, fileToImport) {
   const pool = new Pool({ connectionString, max: 4 });
   await pool.query(SCHEMA);
+  await pool.query("ALTER TABLE accounts ADD COLUMN IF NOT EXISTS google_sub TEXT");
+  await pool.query("CREATE UNIQUE INDEX IF NOT EXISTS accounts_google_sub_idx ON accounts (google_sub) WHERE google_sub IS NOT NULL");
   await importJson(pool, fileToImport);
 
   return {
@@ -134,7 +139,7 @@ export async function createPgStore(connectionString, fileToImport) {
       return accountFrom(result.rows[0]);
     },
     async findByEmail(email) {
-      const result = await pool.query("SELECT * FROM accounts WHERE email = $1", [email]);
+      const result = await pool.query("SELECT * FROM accounts WHERE lower(email) = $1", [String(email || "").toLowerCase()]);
       return accountFrom(result.rows[0]);
     },
     async upsert(input) {
@@ -156,10 +161,10 @@ export async function createPgStore(connectionString, fileToImport) {
       }
       return this.get(id);
     },
-    async register({ email, passwordHash, name, region, guestId }) {
+    async register({ email, passwordHash, name, region, guestId, googleSub }) {
       const existing = await this.findByEmail(email);
       if (existing) {
-        const err = new Error("That email is already registered");
+        const err = new Error(EMAIL_TAKEN);
         err.status = 409;
         throw err;
       }
@@ -174,12 +179,12 @@ export async function createPgStore(connectionString, fileToImport) {
         await client.query("BEGIN");
         await client.query(
           `INSERT INTO accounts
-            (id, name, region, rating, wins, losses, draws, played, email, password_hash, created_at, updated_at)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+            (id, name, region, rating, wins, losses, draws, played, email, password_hash, google_sub, created_at, updated_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
           [
             id, accountName, accountRegion,
             source?.rating ?? 1000, source?.wins ?? 0, source?.losses ?? 0, source?.draws ?? 0, source?.played ?? 0,
-            email, passwordHash, source?.createdAt ?? now, now,
+            email, passwordHash || null, googleSub || null, source?.createdAt ?? now, now,
           ],
         );
         if (source) await client.query("DELETE FROM accounts WHERE id = $1", [source.id]);
@@ -187,7 +192,7 @@ export async function createPgStore(connectionString, fileToImport) {
       } catch (err) {
         await client.query("ROLLBACK");
         if (err.code === "23505") {
-          const dup = new Error("That email is already registered");
+          const dup = new Error(EMAIL_TAKEN);
           dup.status = 409;
           throw dup;
         }
@@ -197,11 +202,28 @@ export async function createPgStore(connectionString, fileToImport) {
       }
       return this.get(id);
     },
+    async linkGoogle(id, googleSub) {
+      const account = await this.get(id);
+      if (!account) return null;
+      if (account.googleSub && account.googleSub !== googleSub) {
+        const err = new Error(EMAIL_TAKEN);
+        err.status = 409;
+        throw err;
+      }
+      await pool.query("UPDATE accounts SET google_sub = $2, updated_at = $3 WHERE id = $1", [id, googleSub, Date.now()]);
+      return this.get(id);
+    },
     async openSession(accountId) {
       const token = newToken();
       await pool.query(
         "INSERT INTO sessions (token_hash, account_id, expires_at) VALUES ($1,$2,$3)",
         [tokenHash(token), accountId, Date.now() + SESSION_MS],
+      );
+      await pool.query(
+        `DELETE FROM sessions WHERE token_hash IN (
+          SELECT token_hash FROM sessions WHERE account_id = $1 ORDER BY expires_at DESC OFFSET 5
+        )`,
+        [accountId],
       );
       return token;
     },

@@ -4,13 +4,29 @@ import os from "node:os";
 import path from "node:path";
 import fs from "node:fs";
 import { createStore } from "../store.js";
-import { hashPassword, verifyPassword, identityFromHello } from "../auth.js";
+import { hashPassword, verifyPassword, identityFromHello, passwordError, EMAIL_TAKEN } from "../auth.js";
 
 function tempStore() {
   const file = path.join(os.tmpdir(), `relay-auth-${Date.now()}-${Math.random().toString(16).slice(2)}.json`);
   const store = createStore(file);
   return { store, file };
 }
+
+test("password rules and one email only", () => {
+  assert.equal(passwordError("short1"), "Password must be 8 to 72 characters");
+  assert.equal(passwordError("longpassword"), "Password needs a letter and a number");
+  assert.equal(passwordError("password1"), "Choose a less common password");
+  assert.equal(passwordError("relaypuck1", "relaypuck1@relaypuck.com"), "Password cannot match the email");
+  assert.equal(passwordError("relaypuck1", "volt@relaypuck.com"), null);
+
+  const { store, file } = tempStore();
+  store.register({ email: "volt@relaypuck.com", passwordHash: hashPassword("relaypuck1"), name: "Volt" });
+  assert.throws(
+    () => store.register({ email: "VOLT@relaypuck.com", passwordHash: hashPassword("relaypuck2"), name: "Other" }),
+    (err) => err.status === 409 && err.message === EMAIL_TAKEN,
+  );
+  fs.unlinkSync(file);
+});
 
 test("password hash verifies only the same password", () => {
   const stored = hashPassword("correct horse");

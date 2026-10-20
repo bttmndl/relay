@@ -5,10 +5,11 @@ import { fileURLToPath } from "node:url";
 import express from "express";
 import cors from "cors";
 import { Server } from "socket.io";
+import { OAuth2Client } from "google-auth-library";
 import { serialize } from "../client/src/engine.js";
 import { createStore, selfAccount } from "./store.js";
 import { createPgStore } from "./pgstore.js";
-import { normalizeEmail, passwordError, hashPassword, verifyPassword, identityFromHello } from "./auth.js";
+import { normalizeEmail, passwordError, hashPassword, verifyPassword, identityFromHello, EMAIL_TAKEN } from "./auth.js";
 import {
   GRACE_MS, corsOrigin, allow, enqueue, pair, newRoom, restoreRoom, exportRoom,
   attemptFlick, sweep, log,
@@ -19,6 +20,11 @@ const ORIGIN = process.env.CLIENT_ORIGIN || "";
 const DATA_FILE = process.env.RELAY_DATA_FILE
   || path.join(path.dirname(fileURLToPath(import.meta.url)), "data", "store.json");
 const DATABASE_URL = process.env.DATABASE_URL || "";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID || "";
+const googleAuth = GOOGLE_CLIENT_ID ? new OAuth2Client(GOOGLE_CLIENT_ID) : null;
+const DUMMY_HASH = hashPassword("relay-dummy-not-a-login");
+const loginFails = new Map();
+const signupLocks = new Set();
 
 const store = DATABASE_URL ? await createPgStore(DATABASE_URL, DATA_FILE) : createStore(DATA_FILE);
 const rooms = new Map();
@@ -37,6 +43,12 @@ for (const saved of await store.loadRooms()) {
 const app = express();
 const checkOrigin = corsOrigin(ORIGIN);
 app.use(cors({ origin: checkOrigin }));
+app.use((_req, res, next) => {
+  res.setHeader("X-Content-Type-Options", "nosniff");
+  res.setHeader("Referrer-Policy", "no-referrer");
+  res.setHeader("Cache-Control", "no-store");
+  next();
+});
 app.use(express.json({ limit: "20kb" }));
 app.get("/", async (_req, res) => {
   res.json({ ok: true, game: "relay", rooms: rooms.size, accounts: await store.count(), store: DATABASE_URL ? "postgres" : "file" });
@@ -60,12 +72,34 @@ function authLimited(req, res) {
   return true;
 }
 
+function tooManyLogins(email) {
+  const row = loginFails.get(email);
+  if (!row) return false;
+  if (Date.now() - row.start > 15 * 60_000) {
+    loginFails.delete(email);
+    return false;
+  }
+  return row.count >= 8;
+}
+
+function noteLoginFail(email) {
+  const row = loginFails.get(email);
+  if (!row || Date.now() - row.start > 15 * 60_000) loginFails.set(email, { count: 1, start: Date.now() });
+  else row.count += 1;
+}
+
+app.get("/auth/config", (_req, res) => {
+  res.json({ googleClientId: GOOGLE_CLIENT_ID || null });
+});
+
 app.post("/auth/signup", async (req, res) => {
   if (authLimited(req, res)) return;
   const email = normalizeEmail(req.body?.email);
-  const problem = passwordError(req.body?.password);
+  const problem = passwordError(req.body?.password, email || "");
   if (!email) return res.status(400).json({ error: "Enter a valid email" });
   if (problem) return res.status(400).json({ error: problem });
+  if (signupLocks.has(email)) return res.status(429).json({ error: "Please wait" });
+  signupLocks.add(email);
   try {
     const guestId = String(req.body?.guestId || "");
     const account = await store.register({
@@ -79,19 +113,64 @@ app.post("/auth/signup", async (req, res) => {
     const token = await store.openSession(account.id);
     res.json({ token, account: selfAccount(account) });
   } catch (err) {
-    res.status(err.status || 400).json({ error: err.message || "Could not create the account" });
+    const status = err.status || 400;
+    res.status(status).json({ error: status === 409 ? EMAIL_TAKEN : (err.message || "Could not create the account") });
+  } finally {
+    signupLocks.delete(email);
   }
 });
 
 app.post("/auth/login", async (req, res) => {
   if (authLimited(req, res)) return;
   const email = normalizeEmail(req.body?.email);
-  const account = email && await store.findByEmail(email);
-  if (!account || !verifyPassword(req.body?.password, account.passwordHash)) {
+  const password = String(req.body?.password || "");
+  if (!email || !password) return res.status(400).json({ error: "Enter your email and password" });
+  if (tooManyLogins(email)) return res.status(429).json({ error: "Too many attempts. Try again in a few minutes." });
+  const account = await store.findByEmail(email);
+  if (account && !account.passwordHash) {
+    return res.status(401).json({ error: "This email uses Google sign-in" });
+  }
+  const ok = verifyPassword(password, account?.passwordHash || DUMMY_HASH);
+  if (!account || !ok) {
+    noteLoginFail(email);
     return res.status(401).json({ error: "Email or password is wrong" });
   }
+  loginFails.delete(email);
   const token = await store.openSession(account.id);
   res.json({ token, account: selfAccount(account) });
+});
+
+app.post("/auth/google", async (req, res) => {
+  if (authLimited(req, res)) return;
+  if (!googleAuth) return res.status(503).json({ error: "Google sign-in is not configured" });
+  const credential = String(req.body?.credential || "");
+  if (!credential || credential.length > 4000) return res.status(400).json({ error: "Missing Google credential" });
+  try {
+    const ticket = await googleAuth.verifyIdToken({ idToken: credential, audience: GOOGLE_CLIENT_ID });
+    const payload = ticket.getPayload() || {};
+    const email = payload.email_verified ? normalizeEmail(payload.email) : null;
+    if (!email || !payload.sub) return res.status(401).json({ error: "Google did not confirm this email" });
+    const guestId = String(req.body?.guestId || "");
+    let account = await store.findByEmail(email);
+    if (account) {
+      account = await store.linkGoogle(account.id, payload.sub);
+    } else {
+      account = await store.register({
+        email,
+        passwordHash: null,
+        googleSub: payload.sub,
+        name: payload.name || payload.given_name,
+        region: req.body?.region,
+        guestId,
+      });
+      if (guestId && guestId !== account.id) await rebindPlayer(guestId, account);
+    }
+    const token = await store.openSession(account.id);
+    res.json({ token, account: selfAccount(account) });
+  } catch (err) {
+    if (err.status === 409) return res.status(409).json({ error: EMAIL_TAKEN });
+    res.status(401).json({ error: "Google sign-in failed" });
+  }
 });
 
 app.post("/auth/logout", async (req, res) => {

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import RelayGame from "./RelayGame.jsx";
 import RelayIntro from "./RelayIntro.jsx";
-import { getSocket, SERVER_URL, loadIdentity, saveName, saveResume, loadResume, helloPayload, saveToken, signup, login, logout, rotateGuestId } from "./net.js";
+import { getSocket, SERVER_URL, loadIdentity, saveName, saveResume, loadResume, helloPayload, saveToken, signup, login, logout, rotateGuestId, googleAuth } from "./net.js";
 import { THEMES, getTheme, loadStoredThemeId, storeThemeId } from "./themes.js";
 
 export default function App() {
@@ -22,6 +22,7 @@ export default function App() {
   const [authPassword, setAuthPassword] = useState("");
   const [authError, setAuthError] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
+  const [googleClientId, setGoogleClientId] = useState("");
   const dismissIntro = useCallback(() => setIntro(false), []);
   const [themeId, setThemeId] = useState(loadStoredThemeId);
   const theme = getTheme(themeId);
@@ -126,6 +127,19 @@ export default function App() {
     getSocket().emit("hello", helloPayload(name));
   };
 
+  const acceptAuth = (result) => {
+    saveToken(result.token);
+    if (result.account?.name) {
+      setName(result.account.name);
+      saveName(result.account.name);
+    }
+    setProfile(result.account);
+    setAuthPassword("");
+    setAuthError("");
+    setAuthMode(null);
+    getSocket().emit("hello", helloPayload(result.account?.name || name));
+  };
+
   const submitAuth = async (event) => {
     event.preventDefault();
     setAuthBusy(true);
@@ -135,21 +149,64 @@ export default function App() {
         ? { email: authEmail, password: authPassword, name, region: loadIdentity().region }
         : { email: authEmail, password: authPassword };
       const result = authMode === "signup" ? await signup(body) : await login(body);
-      saveToken(result.token);
-      if (result.account?.name) {
-        setName(result.account.name);
-        saveName(result.account.name);
-      }
-      setProfile(result.account);
-      setAuthPassword("");
-      setAuthMode(null);
-      getSocket().emit("hello", helloPayload(result.account?.name || name));
+      acceptAuth(result);
     } catch (err) {
       setAuthError(err.message || "Sign in failed");
     } finally {
       setAuthBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!authMode) return undefined;
+    let gone = false;
+    fetch(`${SERVER_URL}/auth/config`)
+      .then((r) => r.json())
+      .then((cfg) => { if (!gone) setGoogleClientId(cfg.googleClientId || ""); })
+      .catch(() => {});
+    return () => { gone = true; };
+  }, [authMode]);
+
+  useEffect(() => {
+    if (!authMode || !googleClientId) return undefined;
+    let dead = false;
+    const render = () => {
+      if (dead || !window.google?.accounts?.id) return;
+      const el = document.getElementById("relay-google-btn");
+      if (!el) return;
+      window.google.accounts.id.initialize({
+        client_id: googleClientId,
+        callback: async (resp) => {
+          if (!resp?.credential) return;
+          setAuthBusy(true);
+          setAuthError("");
+          try {
+            acceptAuth(await googleAuth(resp.credential));
+          } catch (err) {
+            setAuthError(err.message || "Google sign-in failed");
+          } finally {
+            setAuthBusy(false);
+          }
+        },
+      });
+      el.innerHTML = "";
+      window.google.accounts.id.renderButton(el, {
+        type: "standard", theme: "outline", size: "large", text: "continue_with", width: 280,
+      });
+    };
+    const existing = document.getElementById("google-gsi");
+    if (existing) {
+      render();
+      return () => { dead = true; };
+    }
+    const script = document.createElement("script");
+    script.id = "google-gsi";
+    script.src = "https://accounts.google.com/gsi/client";
+    script.async = true;
+    script.onload = render;
+    document.head.appendChild(script);
+    return () => { dead = true; };
+  }, [authMode, googleClientId]);
 
   const signOut = async () => {
     await logout();
@@ -269,10 +326,22 @@ export default function App() {
             )}
             <input value={authEmail} onChange={(e) => setAuthEmail(e.target.value)} placeholder="Email" type="email" autoComplete="email" style={field} />
             <input value={authPassword} onChange={(e) => setAuthPassword(e.target.value)} placeholder="Password" type="password" autoComplete={authMode === "signup" ? "new-password" : "current-password"} style={field} />
-            {authError && <div style={{ color: "#FF6A6A", fontSize: 12, lineHeight: 1.4 }}>{authError}</div>}
+            {authError && <div role="alert" style={{ color: "#FF6A6A", fontSize: 13, lineHeight: 1.4, background: "#3A1414", borderRadius: 8, padding: "8px 10px" }}>{authError}</div>}
             <button type="submit" disabled={authBusy} style={{ ...btn("#0E2415", C.volt), width: "100%", marginTop: 4 }}>
               {authBusy ? "PLEASE WAIT" : authMode === "signup" ? "CREATE ACCOUNT" : "SIGN IN"}
             </button>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, color: C.dim, fontSize: 10, letterSpacing: 1 }}>
+              <span style={{ flex: 1, height: 1, background: C.line }} />
+              OR
+              <span style={{ flex: 1, height: 1, background: C.line }} />
+            </div>
+            {googleClientId ? (
+              <div id="relay-google-btn" style={{ display: "flex", justifyContent: "center", minHeight: 40 }} />
+            ) : (
+              <button type="button" onClick={() => setAuthError("Google sign-in is not turned on for this server yet.")} style={{ ...btn(C.boardDeep, C.text), width: "100%", boxShadow: "none" }}>
+                CONTINUE WITH GOOGLE
+              </button>
+            )}
           </form>
         </div>
       )}

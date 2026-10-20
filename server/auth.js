@@ -9,9 +9,19 @@ export function normalizeEmail(email) {
   return value;
 }
 
-export function passwordError(password) {
+export const EMAIL_TAKEN = "An account with this email already exists";
+
+const COMMON_PASSWORDS = new Set([
+  "password", "password1", "12345678", "123456789", "qwerty123", "letmein1", "iloveyou",
+]);
+
+export function passwordError(password, email = "") {
   const value = String(password || "");
   if (value.length < 8 || value.length > 72) return "Password must be 8 to 72 characters";
+  if (!/[a-zA-Z]/.test(value) || !/[0-9]/.test(value)) return "Password needs a letter and a number";
+  if (COMMON_PASSWORDS.has(value.toLowerCase())) return "Choose a less common password";
+  const local = String(email || "").split("@")[0];
+  if (local && value.toLowerCase() === local.toLowerCase()) return "Password cannot match the email";
   return null;
 }
 

@@ -40,6 +40,7 @@ Open two browser windows on `localhost:5173` → PLAY ONLINE → Create Room in 
 5. Environment variables:
    - `CLIENT_ORIGIN` = extra allowed sites, comma-separated. `https://relaypuck.com`, `https://www.relaypuck.com`, localhost, and Capacitor are already allowed.
    - `DATABASE_URL` = Render Postgres internal URL. Leave this unset only for local play, which uses a JSON file.
+   - `GOOGLE_CLIENT_ID` = optional Google OAuth web client id. When set, the sign-in dialog shows Continue with Google. Authorized JavaScript origins must include `https://relaypuck.com` and `https://www.relaypuck.com`.
    - `RELAY_DATA_FILE` = optional JSON path used when `DATABASE_URL` is not set. Defaults to `server/data/store.json`.
 6. Note the service URL, e.g. `https://relay-d0fn.onrender.com`.
 

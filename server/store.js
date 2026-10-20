@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { newToken, tokenHash, SESSION_MS } from "./auth.js";
+import { newToken, tokenHash, SESSION_MS, EMAIL_TAKEN } from "./auth.js";
 
 const EMPTY = () => ({ accounts: {}, matches: [], rooms: [], sessions: {} });
 
@@ -37,7 +37,8 @@ export function createStore(file) {
     count: () => Object.keys(data.accounts).length,
     get: (id) => data.accounts[id] || null,
     findByEmail(email) {
-      return Object.values(data.accounts).find((account) => account.email === email) || null;
+      const needle = String(email || "").toLowerCase();
+      return Object.values(data.accounts).find((account) => String(account.email || "").toLowerCase() === needle) || null;
     },
     upsert(input) {
       const id = String(input.playerId || "");
@@ -56,6 +57,7 @@ export function createStore(file) {
         played: prev?.played ?? 0,
         email: prev?.email || null,
         passwordHash: prev?.passwordHash || null,
+        googleSub: prev?.googleSub || null,
         createdAt: prev?.createdAt ?? now,
         updatedAt: now,
       };
@@ -63,9 +65,9 @@ export function createStore(file) {
       save();
       return account;
     },
-    register({ email, passwordHash, name, region, guestId }) {
+    register({ email, passwordHash, name, region, guestId, googleSub }) {
       if (this.findByEmail(email)) {
-        const err = new Error("That email is already registered");
+        const err = new Error(EMAIL_TAKEN);
         err.status = 409;
         throw err;
       }
@@ -77,7 +79,8 @@ export function createStore(file) {
       const account = {
         id,
         email,
-        passwordHash,
+        passwordHash: passwordHash || null,
+        googleSub: googleSub || null,
         name: cleanName(name, guest?.name, id),
         region: cleanRegion(region || guest?.region),
         rating: guest?.rating ?? 1000,
@@ -93,8 +96,27 @@ export function createStore(file) {
       save();
       return account;
     },
+    linkGoogle(id, googleSub) {
+      const account = data.accounts[id];
+      if (!account) return null;
+      if (account.googleSub && account.googleSub !== googleSub) {
+        const err = new Error(EMAIL_TAKEN);
+        err.status = 409;
+        throw err;
+      }
+      account.googleSub = googleSub;
+      account.updatedAt = Date.now();
+      save();
+      return account;
+    },
     openSession(accountId) {
       const token = newToken();
+      const mine = Object.entries(data.sessions).filter(([, row]) => row.accountId === accountId);
+      mine.sort((a, b) => a[1].expiresAt - b[1].expiresAt);
+      while (mine.length >= 5) {
+        const [old] = mine.shift();
+        delete data.sessions[old];
+      }
       data.sessions[tokenHash(token)] = { accountId, expiresAt: Date.now() + SESSION_MS };
       save();
       return token;

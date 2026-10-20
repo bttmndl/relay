@@ -15,6 +15,7 @@
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
+    "google-auth-library": "^11.3.1",
     "pg": "^8.23.1",
     "socket.io": "^4.7.5"
   }

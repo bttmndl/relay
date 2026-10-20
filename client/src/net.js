@@ -81,6 +81,11 @@ export function login(body) {
   return postAuth("/auth/login", body);
 }
 
+export function googleAuth(credential) {
+  const id = loadIdentity();
+  return postAuth("/auth/google", { credential, guestId: id.playerId, region: id.region });
+}
+
 export function logout() {
   const token = loadToken();
   saveToken("");
