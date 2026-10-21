@@ -1,11 +1,88 @@
 import { useEffect, useRef, useState } from "react";
 
+const CUES = [
+  { t: 0.04, kind: "noise", dur: 0.26, vol: 0.045 },
+  { t: 0.06, f0: 92, f1: 54, dur: 0.32, type: "sine", vol: 0.07 },
+  { t: 0.42, f0: 170, f1: 540, dur: 0.26, type: "triangle", vol: 0.045 },
+  { t: 1.02, f0: 210, f1: 120, dur: 0.08, type: "square", vol: 0.03 },
+  { t: 1.08, f0: 620, f1: 880, dur: 0.22, type: "sine", vol: 0.045 },
+  { t: 1.15, f0: 523, f1: 523, dur: 0.16, type: "triangle", vol: 0.05 },
+  { t: 1.32, f0: 659, f1: 784, dur: 0.22, type: "triangle", vol: 0.05 },
+  { t: 2.05, f0: 196, f1: 392, dur: 0.55, type: "sine", vol: 0.05 },
+  { t: 2.08, f0: 294, f1: 587, dur: 0.48, type: "triangle", vol: 0.032 },
+];
+
+function playCue(ac, cue, when) {
+  const t = ac.currentTime + Math.max(0, when);
+  if (cue.kind === "noise") {
+    const n = Math.max(1, Math.floor(ac.sampleRate * cue.dur));
+    const buf = ac.createBuffer(1, n, ac.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) data[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = ac.createBufferSource();
+    src.buffer = buf;
+    const filter = ac.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 800;
+    const gain = ac.createGain();
+    gain.gain.setValueAtTime(cue.vol, t);
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + cue.dur);
+    src.connect(filter); filter.connect(gain); gain.connect(ac.destination);
+    src.start(t); src.stop(t + cue.dur);
+    return;
+  }
+  const osc = ac.createOscillator();
+  const gain = ac.createGain();
+  osc.type = cue.type;
+  osc.frequency.setValueAtTime(cue.f0, t);
+  if (cue.f1 !== cue.f0) osc.frequency.exponentialRampToValueAtTime(Math.max(cue.f1, 1), t + cue.dur);
+  gain.gain.setValueAtTime(0.0001, t);
+  gain.gain.exponentialRampToValueAtTime(cue.vol, t + 0.018);
+  gain.gain.exponentialRampToValueAtTime(0.0001, t + cue.dur);
+  osc.connect(gain); gain.connect(ac.destination);
+  osc.start(t); osc.stop(t + cue.dur + 0.02);
+}
+
 export default function RelayIntro({ onDone, colors }) {
   const rootRef = useRef(null);
   const wordRef = useRef(null);
+  const audioRef = useRef(null);
+  const startedAt = useRef(0);
+  const played = useRef(false);
   const [reduced] = useState(() =>
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches
   );
+
+  useEffect(() => {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return undefined;
+    const ac = new AC();
+    audioRef.current = ac;
+    startedAt.current = performance.now();
+    const startScore = () => {
+      if (played.current || ac.state !== "running") return;
+      played.current = true;
+      const elapsed = (performance.now() - startedAt.current) / 1000;
+      if (reduced) {
+        playCue(ac, { f0: 220, f1: 440, dur: 0.28, type: "triangle", vol: 0.05 }, 0);
+        playCue(ac, { f0: 330, f1: 660, dur: 0.34, type: "sine", vol: 0.035 }, 0.04);
+        return;
+      }
+      CUES.forEach((cue) => {
+        if (cue.t + 0.05 >= elapsed) playCue(ac, cue, cue.t - elapsed);
+      });
+    };
+    const unlock = () => { ac.resume().then(startScore).catch(() => {}); };
+    unlock();
+    window.addEventListener("pointerdown", unlock, true);
+    window.addEventListener("keydown", unlock, true);
+    return () => {
+      window.removeEventListener("pointerdown", unlock, true);
+      window.removeEventListener("keydown", unlock, true);
+      ac.close().catch(() => {});
+      audioRef.current = null;
+    };
+  }, [reduced]);
 
   useEffect(() => {
     let landTimer = 0;
@@ -33,12 +110,21 @@ export default function RelayIntro({ onDone, colors }) {
     };
   }, [onDone, reduced]);
 
+  const skip = () => {
+    const ac = audioRef.current;
+    if (ac && ac.state !== "running") {
+      ac.resume().catch(() => {});
+      return;
+    }
+    onDone();
+  };
+
   const felt = `linear-gradient(160deg, ${colors.feltTop}, ${colors.feltBottom})`;
 
   return (
     <div ref={rootRef} className={reduced ? "relay-intro is-static" : "relay-intro"}>
       <style>{css}</style>
-      <button type="button" className="skip" onClick={onDone} aria-label="Skip intro" />
+      <button type="button" className="skip" onClick={skip} aria-label="Skip intro" />
       <div className="backdrop" style={{ background: `linear-gradient(180deg, ${colors.board}, ${colors.boardDeep})` }} />
       <div className="lockup">
         <div className="stage" aria-hidden="true">
