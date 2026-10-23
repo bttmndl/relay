@@ -212,8 +212,10 @@ export function launch(g, idx, ang, v, ev) {
   return true;
 }
 
-// one fixed physics step (call at 60 Hz)
-export function stepGame(g, ev) {
+// shot clock only runs while waiting to aim — frozen mid-shot and once the match ends.
+// online play passes { clock: false }: the server owns the timeout, the client only
+// eases the displayed seconds so a local expiry can't pass the turn early and stall.
+export function stepGame(g, ev, opts) {
   g.frame++;
   // sink animations are game state (they end in `alive = false`)
   g.pucks.forEach((p) => {
@@ -229,8 +231,12 @@ export function stepGame(g, ev) {
   if (g.winner === null) updateLivePort(g);
 
   // shot clock only runs while waiting to aim — frozen mid-shot and once the match ends
-  if (g.phase === "aim" && g.winner === null && --g.turnTimeLeft <= 0) {
-    turnTimeoutPass(g, ev);
+  if (g.phase === "aim" && g.winner === null) {
+    if (opts && opts.clock === false) {
+      if (g.turnTimeLeft > 1) g.turnTimeLeft--;
+    } else if (--g.turnTimeLeft <= 0) {
+      turnTimeoutPass(g, ev);
+    }
   }
 
   if (g.phase !== "resolve") return;
@@ -445,13 +451,16 @@ function relocateQueen(g, ev) {
 }
 
 // no shot taken before the shot clock ran out — turn passes with no score,
-// same as any other foul
+// same as any other foul. shotDone is the handoff a finished shot uses, so
+// the AI (which only shoots from that event) actually takes the passed turn.
 function turnTimeoutPass(g, ev) {
+  const shooter = g.turn;
   g.streak = 0;
   g.turn = 1 - g.turn;
   g.turnTimeLeft = TURN_FRAMES;
   ev.push({ t: "turnTimeout" });
   ev.push({ t: "turn", turn: g.turn });
+  ev.push({ t: "shotDone", shooter });
 }
 
 // ---------------- online sync ----------------

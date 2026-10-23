@@ -147,3 +147,48 @@ test("queen starts in the center and relocates only after she is moved", () => {
   const others = g.pucks.filter((p) => p !== after && p.alive);
   assert.equal(others.some((p) => Math.hypot(p.x - after.x, p.y - after.y) < g.R * 2), false);
 });
+
+test("a missed shot clock passes the turn instead of stalling", () => {
+  const g = createGame(400);
+  const ev = [];
+  for (let i = 0; i < 20 * 60 - 1; i++) stepGame(g, ev);
+  assert.equal(g.turn, 0);
+  assert.equal(g.phase, "aim");
+  assert.equal(ev.some((e) => e.t === "turnTimeout"), false);
+  stepGame(g, ev);
+  assert.equal(g.turn, 1);
+  assert.equal(g.phase, "aim");
+  assert.equal(g.turnTimeLeft, 20 * 60);
+  assert.equal(ev.filter((e) => e.t === "turnTimeout").length, 1);
+  assert.equal(ev.find((e) => e.t === "shotDone")?.shooter, 0);
+  const next = [];
+  stepGame(g, next);
+  assert.equal(g.turn, 1);
+  assert.equal(next.length, 0);
+
+  // an online client may display the countdown, but must not pass the turn itself
+  const cosmetic = createGame(400);
+  for (let i = 0; i < 20 * 60 + 30; i++) stepGame(cosmetic, [], { clock: false });
+  assert.equal(cosmetic.turn, 0);
+  assert.equal(cosmetic.phase, "aim");
+  assert.equal(cosmetic.turnTimeLeft, 1);
+
+  const rooms = new Map();
+  const room = newRoom("CLOCK1");
+  room.started = true;
+  room.clockStartsAt = 0;
+  room.players = [
+    { playerId: "p0", socketId: "s0", disconnectedAt: null },
+    { playerId: "p1", socketId: "s1", disconnectedAt: null },
+  ];
+  rooms.set(room.code, room);
+  let saw = false;
+  for (let i = 0; i < 80; i++) {
+    const actions = sweep(rooms, 1_000_000 + i * 250, { frames: 15 });
+    if (actions.some((a) => a.type === "state" && a.snap.turn === 1)) saw = true;
+  }
+  assert.equal(saw, true);
+  assert.equal(room.game.turn, 1);
+  assert.equal(room.game.phase, "aim");
+  assert.equal(room.game.turnTimeLeft, 20 * 60);
+});

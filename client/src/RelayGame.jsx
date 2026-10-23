@@ -193,9 +193,21 @@ export default function RelayGame({ mode, online, onExit, theme }) {
     const onState = ({ kind, snap, reason }) => {
       const g = G.current;
       if (!g || !snap) return;
-      if (kind === "tick" && g.phase === "resolve") return;
+      const turnChanged = snap.turn !== g.turn;
+      const matchEnded = snap.winner != null && g.winner == null;
+      // keep animating a local shot, but never ignore a server timeout or ending
+      if (kind === "tick" && g.phase === "resolve" && !turnChanged && !matchEnded) return;
+      const prevTurn = g.turn;
+      const prevScore = `${g.scores[0]}:${g.scores[1]}`;
       applyServer(snap);
       if (reason) say(reason, "#FF6A6A", 1200);
+      const sameScore = `${snap.scores?.[0]}:${snap.scores?.[1]}` === prevScore;
+      if (kind === "tick" && snap.winner == null && snap.turn !== prevTurn && sameScore) {
+        drag.current = null;
+        sfx.current?.reject();
+        setTurnToken((t) => t + 1);
+        say("TIME'S UP — TURN PASSED", "#FF6A6A", 1500);
+      }
     };
     const onDisc = () => setLinkNote("OPPONENT RECONNECTING…");
     const onBack = () => setLinkNote(null);
@@ -257,6 +269,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       }
       else if (e.t === "queenShift") say("QUEEN RESET", theme.canvas.queen, 1200);
       else if (e.t === "turnTimeout") {
+        drag.current = null;
         sfx.current?.reject();
         setTurnToken((t) => t + 1);
         say("TIME'S UP — TURN PASSED", "#FF6A6A", 1500);
@@ -314,7 +327,9 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       let guard = 0;
       while (acc >= STEP && guard < 6) {
         const ev = [];
-        stepGame(g, ev);
+        // online: server sweep is the shot clock. stepping it here too let a
+        // local timeout pass the turn, then the next snapshot put it back.
+        stepGame(g, ev, { clock: mode !== "online" });
         if (ev.length) drainEvents(ev);
         acc -= STEP;
         guard++;
