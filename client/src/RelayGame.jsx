@@ -72,9 +72,9 @@ export default function RelayGame({ mode, online, onExit }) {
       window.visualViewport?.removeEventListener("resize", measure);
     };
   }, []);
-  // Header, score row, prompt, reflection and the dock sit around the board.
-  const chrome = 292;
-  const size = Math.max(220, Math.min(440, w - 20, h - chrome));
+  // Header, score row, prompt, the floor mirror and the dock sit around the board.
+  const chrome = 268;
+  const size = Math.max(200, Math.min(440, w - 16, Math.floor((h - chrome) / 1.26)));
   const engineSize = mode === "online" ? ONLINE_BOARD : size;
 
   const [turn, setTurn] = useState(0);
@@ -96,6 +96,7 @@ export default function RelayGame({ mode, online, onExit }) {
 
   const nameRefs = useRef([]);
   const canvasRef = useRef(null);
+  const reflectRef = useRef(null);
   const [flies, setFlies] = useState([]);
   const [nameFlash, setNameFlash] = useState([0, 0]);
   const G = useRef(null);
@@ -351,6 +352,7 @@ export default function RelayGame({ mode, online, onExit }) {
       rejects.current.forEach((r) => (r.t -= 0.025));
       rejects.current = rejects.current.filter((r) => r.t > 0);
       render(ctx, g, pulse);
+      paintFloor(canvas);
       const { pending } = portRotateInfo(g);
       const nextPortsIn = pending ? Math.ceil(pending.framesLeft / 60) : null;
       if (nextPortsIn !== lastPortsIn) { lastPortsIn = nextPortsIn; setPortsIn(nextPortsIn); }
@@ -360,6 +362,44 @@ export default function RelayGame({ mode, online, onExit }) {
     };
     raf = requestAnimationFrame(loop);
     return () => cancelAnimationFrame(raf);
+
+    function paintFloor(source) {
+      const reflect = reflectRef.current;
+      if (!reflect) return;
+      const rh = Math.round(engineSize * 0.26);
+      const rw = source.width;
+      const rhh = Math.max(1, Math.round(rh * dpr));
+      const crop = Math.round(engineSize * 0.028 * dpr);
+      if (reflect.width !== rw || reflect.height !== rhh) {
+        reflect.width = rw;
+        reflect.height = rhh;
+      }
+      const rctx = reflect.getContext("2d");
+      rctx.setTransform(1, 0, 0, 1, 0, 0);
+      rctx.clearRect(0, 0, rw, rhh);
+      rctx.save();
+      rctx.translate(0, rhh);
+      rctx.scale(1, -1);
+      rctx.drawImage(source, 0, Math.max(0, source.height - rhh - crop), rw, rhh, 0, 0, rw, rhh);
+      rctx.restore();
+      rctx.globalCompositeOperation = "destination-in";
+      const fade = rctx.createLinearGradient(0, 0, 0, rhh);
+      fade.addColorStop(0, "rgba(0,0,0,0.88)");
+      fade.addColorStop(0.16, "rgba(0,0,0,0.55)");
+      fade.addColorStop(0.42, "rgba(0,0,0,0.22)");
+      fade.addColorStop(0.72, "rgba(0,0,0,0.05)");
+      fade.addColorStop(1, "rgba(0,0,0,0)");
+      rctx.fillStyle = fade;
+      rctx.fillRect(0, 0, rw, rhh);
+      rctx.globalCompositeOperation = "source-over";
+      const glow = rctx.createRadialGradient(rw / 2, rhh * 0.02, rw * 0.04, rw / 2, rhh * 0.55, rw * 0.55);
+      glow.addColorStop(0, "rgba(255, 196, 90, 0.42)");
+      glow.addColorStop(0.38, "rgba(255, 150, 40, 0.16)");
+      glow.addColorStop(0.7, "rgba(40, 120, 255, 0.07)");
+      glow.addColorStop(1, "rgba(0,0,0,0)");
+      rctx.fillStyle = glow;
+      rctx.fillRect(0, 0, rw, rhh);
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size]);
 
@@ -378,9 +418,6 @@ export default function RelayGame({ mode, online, onExit }) {
       const isLive = liveGates.includes(pi) && !flicker;
       const sideBlue = pi === 1 || pi === 3;
       const glow = isLive ? "#FFF1C2" : sideBlue ? BLUE : GOLD;
-      ctx.save();
-      ctx.shadowColor = glow;
-      ctx.shadowBlur = isLive ? 28 + Math.sin(pulse * 3) * 8 : 10;
       ctx.beginPath();
       ctx.arc(pk.x, pk.y, g.pocketR, 0, Math.PI * 2);
       const hole = ctx.createRadialGradient(pk.x, pk.y, 2, pk.x, pk.y, g.pocketR);
@@ -390,12 +427,17 @@ export default function RelayGame({ mode, online, onExit }) {
       ctx.fillStyle = hole;
       ctx.fill();
       ctx.beginPath();
+      ctx.arc(pk.x, pk.y, g.pocketR * 0.86, 0, Math.PI * 2);
+      ctx.strokeStyle = glow;
+      ctx.globalAlpha = isLive ? 0.28 : 0.14;
+      ctx.lineWidth = isLive ? 7 : 4;
+      ctx.stroke();
+      ctx.beginPath();
       ctx.arc(pk.x, pk.y, g.pocketR * 0.78, 0, Math.PI * 2);
       ctx.strokeStyle = glow;
-      ctx.lineWidth = isLive ? 3 : 1.6;
+      ctx.lineWidth = isLive ? 2.4 : 1.5;
       ctx.globalAlpha = isLive ? 1 : 0.55;
       ctx.stroke();
-      ctx.restore();
       ctx.globalAlpha = 1;
       if (isLive) {
         ctx.beginPath();
@@ -610,13 +652,15 @@ export default function RelayGame({ mode, online, onExit }) {
       }
       ctx.save();
       ctx.translate(p.x, p.y);
-      ctx.shadowColor = col;
-      ctx.shadowBlur = hot ? 22 : 12;
       if (isQueenVisible) {
         const qg = ctx.createRadialGradient(-rad * 0.2, -rad * 0.25, 1, 0, 0, rad);
         qg.addColorStop(0, "#FFD0DA");
         qg.addColorStop(0.45, QUEEN);
         qg.addColorStop(1, "#8E1230");
+        ctx.beginPath();
+        ctx.arc(0, 0, rad * 1.15, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255, 59, 92, 0.22)";
+        ctx.fill();
         ctx.beginPath();
         ctx.arc(0, 0, rad, 0, Math.PI * 2);
         ctx.fillStyle = qg;
@@ -628,11 +672,13 @@ export default function RelayGame({ mode, online, onExit }) {
         ctx.beginPath();
         ctx.arc(0, 0, rad * 0.82, 0, Math.PI * 2);
         ctx.strokeStyle = col;
+        ctx.globalAlpha = hot ? 0.22 : 0.12;
+        ctx.lineWidth = Math.max(5, rad * 0.72);
+        ctx.stroke();
+        ctx.globalAlpha = hot ? 1 : 0.92;
         ctx.lineWidth = Math.max(2.4, rad * 0.34);
-        ctx.globalAlpha = hot ? 1 : 0.9;
         ctx.stroke();
         ctx.globalAlpha = 1;
-        ctx.shadowBlur = 0;
         ctx.beginPath();
         ctx.arc(0, 0, rad * 0.46, 0, Math.PI * 2);
         ctx.fillStyle = "rgba(4, 8, 18, 0.92)";
@@ -642,13 +688,10 @@ export default function RelayGame({ mode, online, onExit }) {
         ctx.fillStyle = "rgba(255,255,255,0.9)";
         ctx.fill();
         if (p.striker) {
-          ctx.shadowColor = col;
-          ctx.shadowBlur = 14;
           ctx.beginPath();
           ctx.arc(0, 0, rad * 0.2, 0, Math.PI * 2);
           ctx.fillStyle = "#FFFFFF";
           ctx.fill();
-          ctx.shadowBlur = 0;
         }
       }
       if (drag.current && drag.current.idx === i) {
@@ -727,14 +770,13 @@ export default function RelayGame({ mode, online, onExit }) {
     frame.addColorStop(0.58, "#8AD8FF");
     frame.addColorStop(1, "#2F8CFF");
     ctx.save();
-    ctx.shadowColor = "#FFB030";
-    ctx.shadowBlur = 18;
+    ctx.lineWidth = Math.max(14, S * 0.04);
+    ctx.strokeStyle = "rgba(255, 176, 48, 0.16)";
+    rr(ctx, m, m, S - m * 2, S - m * 2, S * 0.07);
+    ctx.stroke();
     ctx.lineWidth = Math.max(6, S * 0.018);
     ctx.strokeStyle = frame;
     rr(ctx, m, m, S - m * 2, S - m * 2, S * 0.07);
-    ctx.stroke();
-    ctx.shadowColor = "#3DB7FF";
-    ctx.shadowBlur = 22;
     ctx.stroke();
     ctx.restore();
 
@@ -927,17 +969,9 @@ export default function RelayGame({ mode, online, onExit }) {
           font-size: 10px; letter-spacing: 2.2px; color: #FFC14D; text-align: center;
           text-shadow: 0 0 10px rgba(255,193,77,.35);
         }
-        .ports { margin-top: -4px; margin-bottom: 6px; font-size: 10px; letter-spacing: 1.6px; color: #FF6A6A; font-family: 'Orbitron', sans-serif; }
-        .stage {
-          position: relative;
-          -webkit-box-reflect: below 4px linear-gradient(transparent 0%, transparent 68%, rgba(0,0,0,.72) 100%);
-          filter: drop-shadow(0 10px 12px rgba(0,0,0,.45));
-        }
-        .floor {
-          width: min(460px, 88%); min-height: 46px; flex: 1; margin-top: 4px; pointer-events: none;
-          background: radial-gradient(ellipse at 50% 18%, rgba(255,186,70,.38), rgba(46,140,255,.14) 46%, transparent 74%);
-          filter: blur(7px);
-        }
+        .ports { height: 14px; margin-top: -4px; margin-bottom: 4px; font-size: 10px; letter-spacing: 1.6px; color: #FF6A6A; font-family: 'Orbitron', sans-serif; }
+        .stage { position: relative; }
+        .reflect { display: block; margin: -12px auto 8px; pointer-events: none; }
         .dock { width: min(520px, 100%); display: grid; grid-template-columns: 76px 1fr 76px; gap: 12px; align-items: end; }
         .dock button { cursor: pointer; color: #FFC14D; background: rgba(10,14,24,.78); }
         .dock .sq {
@@ -1082,9 +1116,9 @@ export default function RelayGame({ mode, online, onExit }) {
       </div>
 
       <div className="prompt" style={{ animation: "rlPulse 1.6s infinite", color: linkNote ? "#FF6A6A" : GOLD }}>{statusLine}</div>
-      {winner === null && !waitingStart && portsIn !== null && (
-        <div className="ports" style={{ animation: portsIn <= 3 ? "rlPulse 0.6s infinite" : "none" }}>PORTS SHIFT {portsIn}s</div>
-      )}
+      <div className="ports" style={{ visibility: winner === null && !waitingStart && portsIn !== null ? "visible" : "hidden", animation: portsIn !== null && portsIn <= 3 ? "rlPulse 0.6s infinite" : "none" }}>
+        PORTS SHIFT {portsIn ?? 0}s
+      </div>
 
       <div className="stage">
         <canvas
@@ -1101,7 +1135,12 @@ export default function RelayGame({ mode, online, onExit }) {
           </div>
         )}
       </div>
-      <div className="floor" />
+      <canvas
+        ref={reflectRef}
+        className="reflect"
+        aria-hidden="true"
+        style={{ width: size, height: Math.round(size * 0.26) }}
+      />
 
       <div className="dock">
         <button type="button" className="sq" onClick={undoShot} disabled={mode === "online" || !canUndo} aria-label="Undo">
