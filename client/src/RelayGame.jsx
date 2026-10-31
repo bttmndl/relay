@@ -4,13 +4,17 @@ import {
   getLivePorts, portRotateInfo, PNAME, QUEEN_POINTS, STREAK_BONUS_POINTS, TURN_SECONDS, ONLINE_BOARD,
 } from "./engine.js";
 import { getSocket, saveResume } from "./net.js";
-import { hexToRgb } from "./themes.js";
 
 const EMOTES = ["👍", "🔥", "😂", "😭"];
+const GOLD = "#FFC14D";
+const BLUE = "#3EC8FF";
+const QUEEN = "#FF3B5C";
 
 function makeSfx() {
   let ac = null;
+  const state = { muted: false };
   const ctx = () => {
+    if (state.muted) return null;
     if (!ac) { try { ac = new (window.AudioContext || window.webkitAudioContext)(); } catch { /* no audio */ } }
     return ac;
   };
@@ -33,20 +37,19 @@ function makeSfx() {
     poison: () => blip(300, 70, 0.5, "sawtooth", 0.12),
     reject: () => blip(240, 60, 0.22, "square", 0.09),
     win: () => { blip(330, 660, 0.3, "sine", 0.1); setTimeout(() => blip(495, 990, 0.4, "sine", 0.1), 150); },
+    state,
   };
 }
 
 // mode: 'ai' | 'pvp' | 'online'
 // online: { playerIndex, startAt } (socket via getSocket())
-// theme: board theme object from themes.js — purely visual, no game logic
-export default function RelayGame({ mode, online, onExit, theme }) {
-  const players = theme.players;
+// The match screen is the neon arena — board themes do not restyle it.
+export default function RelayGame({ mode, online, onExit }) {
+  const players = [GOLD, BLUE];
   const C = {
-    board: theme.ui.board, boardDeep: theme.ui.boardDeep, panel: theme.ui.panel, line: theme.ui.line,
-    copper: theme.accent, hot: theme.ui.hot, neutral: theme.neutral, text: theme.ui.text, dim: theme.ui.dim,
+    board: "#07080f", boardDeep: "#05060c", panel: "rgba(10,14,26,0.72)", line: "rgba(255,255,255,0.08)",
+    copper: GOLD, hot: "#FFF6D8", neutral: "#8FD4FF", text: "#E8F1FF", dim: "#8EA0C0",
   };
-  const accentRgb = hexToRgb(theme.accent);
-  const holeMidRgb = hexToRgb(theme.canvas.holeMid);
   const rootRef = useRef(null);
   const [w, setW] = useState(() => document.documentElement.clientWidth || window.innerWidth);
   const [h, setH] = useState(() => window.visualViewport?.height || window.innerHeight);
@@ -69,9 +72,8 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       window.visualViewport?.removeEventListener("resize", measure);
     };
   }, []);
-  // Score row, prompt, and buttons sit around the board. Size the square so
-  // that whole stack fits the visible screen, then center it.
-  const chrome = 168;
+  // Header, score row, prompt, reflection and the dock sit around the board.
+  const chrome = 292;
   const size = Math.max(220, Math.min(440, w - 20, h - chrome));
   const engineSize = mode === "online" ? ONLINE_BOARD : size;
 
@@ -87,6 +89,10 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   const [turnSecLeft, setTurnSecLeft] = useState(TURN_SECONDS);
   const [turnToken, setTurnToken] = useState(0); // bumped whenever the shot clock resets, to restart its border animation
   const [linkNote, setLinkNote] = useState(null);
+  const [streak, setStreak] = useState(0);
+  const [sheet, setSheet] = useState(null);
+  const [muted, setMuted] = useState(false);
+  const [canUndo, setCanUndo] = useState(false);
 
   const nameRefs = useRef([]);
   const canvasRef = useRef(null);
@@ -97,6 +103,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   const arcs = useRef([]);
   const rejects = useRef([]);
   const drag = useRef(null);
+  const history = useRef([]);
   const me = mode === "online" ? online.playerIndex : null;
 
   const say = (text, col, ms = 1400) => {
@@ -140,8 +147,11 @@ export default function RelayGame({ mode, online, onExit, theme }) {
     if (!sfx.current) sfx.current = makeSfx();
     arcs.current = [];
     rejects.current = [];
+    history.current = [];
     setScores([...(G.current.scores)]); setTurn(G.current.turn); setWinner(G.current.winner);
     setTurnSecLeft(Math.ceil(G.current.turnTimeLeft / 60)); setTurnToken(0);
+    setStreak(G.current.streak || 0);
+    setCanUndo(false);
 
     const beginMatch = () => {
       setWaitingStart(false);
@@ -153,9 +163,9 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       setTurnSecLeft(TURN_SECONDS); setTurnToken((t) => t + 1);
       say(
         mode === "online"
-          ? me === 0 ? "YOU ARE VOLT — you shoot first" : "YOU ARE AMP — Volt shoots first"
-          : "VOLT first — everything you touch becomes yours",
-        players[mode === "online" ? me : 0], 2400);
+          ? me === 0 ? "YOU SHOOT FIRST" : "VOLT SHOOTS FIRST"
+          : "YOU SHOOT FIRST",
+        players[mode === "online" ? me : 0], 1600);
     };
 
     if (mode === "online" && !online?.resumed) {
@@ -186,7 +196,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       const g = G.current;
       if (!g || !snap) return;
       applySync(g, snap);
-      setScores([...g.scores]); setTurn(g.turn);
+      setScores([...g.scores]); setTurn(g.turn); setStreak(g.streak || 0);
       setTurnSecLeft(Math.ceil((g.turnTimeLeft || 0) / 60));
       if (g.winner !== null) setWinner(g.winner);
     };
@@ -249,8 +259,8 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         if (e.t === "pot") sfx.current?.pot();
         else sfx.current?.win();
         setScores([...g.scores]);
-        spawnScoreFly(e.player, e.pts || 1, e.x, e.y, e.t === "queenPot" ? theme.canvas.queen : players[e.player]);
-        if (e.t === "queenPot") say(`QUEEN! +${e.pts || QUEEN_POINTS}`, theme.canvas.queen, 1800);
+        spawnScoreFly(e.player, e.pts || 1, e.x, e.y, e.t === "queenPot" ? QUEEN : players[e.player]);
+        if (e.t === "queenPot") say(`QUEEN! +${e.pts || QUEEN_POINTS}`, QUEEN, 1800);
       }
       else if (e.t === "poison") {
         sfx.current?.poison(); setScores([...g.scores]);
@@ -267,7 +277,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           say("PORT OFFLINE — RETURNED", "#FF6A6A", 1400);
         }
       }
-      else if (e.t === "queenShift") say("QUEEN RESET", theme.canvas.queen, 1200);
+      else if (e.t === "queenShift") say("QUEEN RESET", QUEEN, 1200);
       else if (e.t === "turnTimeout") {
         drag.current = null;
         sfx.current?.reject();
@@ -300,6 +310,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         }
       }
     });
+    setStreak(g.streak || 0);
   };
 
   // ---------------- fixed-timestep loop + render ----------------
@@ -355,7 +366,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
   const render = (ctx, g, pulse) => {
     const { S, R, pad } = g;
     ctx.clearRect(0, 0, S, S);
-    drawBoardStyle(ctx, g, pulse);
+    drawNeonBoard(ctx, g, pulse);
 
     // ports — only the "live" one (getLivePorts) accepts a pot; it's
     // whichever pocket is currently hardest to reach, and it flickers only
@@ -365,29 +376,31 @@ export default function RelayGame({ mode, online, onExit, theme }) {
     const flicker = pending && pending.framesLeft < 45 && Math.floor(pending.framesLeft / 4) % 2 === 0;
     g.pockets.forEach((pk, pi) => {
       const isLive = liveGates.includes(pi) && !flicker;
-      const glow = isLive ? theme.canvas.liveGlow : C.copper;
-      const grad = ctx.createRadialGradient(pk.x, pk.y, 1, pk.x, pk.y, g.pocketR);
-      grad.addColorStop(0, theme.canvas.holeInner);
-      grad.addColorStop(0.75, theme.canvas.holeMid);
-      grad.addColorStop(1, `rgba(${holeMidRgb.r},${holeMidRgb.g},${holeMidRgb.b},0)`);
+      const sideBlue = pi === 1 || pi === 3;
+      const glow = isLive ? "#FFF1C2" : sideBlue ? BLUE : GOLD;
+      ctx.save();
+      ctx.shadowColor = glow;
+      ctx.shadowBlur = isLive ? 28 + Math.sin(pulse * 3) * 8 : 10;
       ctx.beginPath();
       ctx.arc(pk.x, pk.y, g.pocketR, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
+      const hole = ctx.createRadialGradient(pk.x, pk.y, 2, pk.x, pk.y, g.pocketR);
+      hole.addColorStop(0, "#010206");
+      hole.addColorStop(0.72, "#070b14");
+      hole.addColorStop(1, "rgba(7,11,20,0)");
+      ctx.fillStyle = hole;
       ctx.fill();
       ctx.beginPath();
-      ctx.arc(pk.x, pk.y, g.pocketR * 0.72, 0, Math.PI * 2);
+      ctx.arc(pk.x, pk.y, g.pocketR * 0.78, 0, Math.PI * 2);
       ctx.strokeStyle = glow;
-      ctx.lineWidth = isLive ? 2.6 : 1.4;
-      ctx.globalAlpha = isLive ? 1 : 0.35;
-      ctx.shadowColor = glow;
-      ctx.shadowBlur = isLive ? 14 + Math.sin(pulse * 3) * 5 : 0;
+      ctx.lineWidth = isLive ? 3 : 1.6;
+      ctx.globalAlpha = isLive ? 1 : 0.55;
       ctx.stroke();
-      ctx.shadowBlur = 0;
+      ctx.restore();
       ctx.globalAlpha = 1;
       if (isLive) {
         ctx.beginPath();
-        ctx.arc(pk.x, pk.y, g.pocketR * 0.72 * (0.5 + 0.15 * Math.sin(pulse * 3)), 0, Math.PI * 2);
-        ctx.strokeStyle = `${theme.canvas.liveGlow}66`;
+        ctx.arc(pk.x, pk.y, g.pocketR * (0.42 + 0.08 * Math.sin(pulse * 3)), 0, Math.PI * 2);
+        ctx.strokeStyle = "rgba(255,241,194,0.45)";
         ctx.lineWidth = 1;
         ctx.stroke();
       }
@@ -488,7 +501,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           ctx.strokeStyle = C.hot;
           ctx.lineWidth = 1.5;
           ctx.stroke();
-          aimArrow(hit.ox, hit.oy, hx * imp, hy * imp, hit.queen ? theme.canvas.queen : "#F4FFF0", R * 2.6);
+          aimArrow(hit.ox, hit.oy, hx * imp, hy * imp, hit.queen ? QUEEN : "#F4FFF0", R * 2.6);
           aimArrow(hit.x, hit.y, hit.svx - hx * imp, hit.svy - hy * imp, `${players[g.turn]}CC`, R * 1.7);
         }
         const breathe = 0.5 + 0.5 * Math.sin(pulse * 5);
@@ -502,27 +515,22 @@ export default function RelayGame({ mode, online, onExit, theme }) {
         ctx.save();
         ctx.lineCap = "round";
         ctx.shadowColor = players[g.turn];
-        ctx.shadowBlur = 6 + breathe * 10;
+        ctx.shadowBlur = 16 + breathe * 8;
         const shaft = ctx.createLinearGradient(buttX, buttY, tipX, tipY);
-        shaft.addColorStop(0, "#2A1A10");
-        shaft.addColorStop(0.55, "#C4894A");
-        shaft.addColorStop(0.86, "#F3E6CC");
-        shaft.addColorStop(1, players[g.turn]);
+        shaft.addColorStop(0, "rgba(255,255,255,0)");
+        shaft.addColorStop(0.4, players[g.turn]);
+        shaft.addColorStop(1, "#FFFFFF");
         ctx.beginPath();
         ctx.moveTo(buttX, buttY);
         ctx.lineTo(tipX, tipY);
         ctx.strokeStyle = shaft;
-        ctx.lineWidth = Math.max(5, R * 0.42);
+        ctx.lineWidth = Math.max(3.2, R * 0.26);
         ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(tipX, tipY, Math.max(2.2, R * 0.16), 0, Math.PI * 2);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fill();
         ctx.shadowBlur = 0;
-        ctx.beginPath();
-        ctx.arc(tipX, tipY, Math.max(2.4, R * 0.18), 0, Math.PI * 2);
-        ctx.fillStyle = "#F4FFF0";
-        ctx.fill();
-        ctx.beginPath();
-        ctx.arc(buttX, buttY, Math.max(3.2, R * 0.26), 0, Math.PI * 2);
-        ctx.fillStyle = "#1A120C";
-        ctx.fill();
         const nx = -Math.sin(ang);
         const ny = Math.cos(ang);
         for (let c = 0; c < 2; c++) {
@@ -580,66 +588,82 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       ctx.shadowBlur = 0;
     });
 
-    // pucks
+    // pucks — neon rings, with a motion trail while they travel
     g.pucks.forEach((p, i) => {
       if (!p.alive) return;
       const scale = p.sink ? p.sink.s : 1;
       const rad = R * scale;
       const isQueenVisible = p.isQueen && !p.striker;
-      const col = p.striker ? players[g.turn] : isQueenVisible ? theme.canvas.queen : p.charge !== null ? players[p.charge] : C.neutral;
+      const col = p.striker ? players[g.turn] : isQueenVisible ? QUEEN : p.charge !== null ? players[p.charge] : C.neutral;
       const hot = p.striker || p.charge !== null || isQueenVisible;
+      const spd = Math.hypot(p.vx, p.vy);
+      if (spd > 0.7 && !p.sink) {
+        for (let k = 6; k >= 1; k--) {
+          ctx.beginPath();
+          ctx.arc(p.x - p.vx * k * 0.85, p.y - p.vy * k * 0.85, rad * (1 - k * 0.07), 0, Math.PI * 2);
+          ctx.strokeStyle = col;
+          ctx.globalAlpha = 0.22 * (1 - k / 7);
+          ctx.lineWidth = Math.max(1.5, rad * 0.22);
+          ctx.stroke();
+        }
+        ctx.globalAlpha = 1;
+      }
       ctx.save();
       ctx.translate(p.x, p.y);
       ctx.shadowColor = col;
-      ctx.shadowBlur = hot ? 16 : 4;
-      const grad = ctx.createRadialGradient(-rad * 0.3, -rad * 0.3, 1, 0, 0, rad);
-      grad.addColorStop(0, hot ? theme.canvas.puckHot : theme.canvas.puckCold);
-      grad.addColorStop(1, theme.canvas.puckDeep);
-      ctx.beginPath();
-      ctx.arc(0, 0, rad, 0, Math.PI * 2);
-      ctx.fillStyle = grad;
-      ctx.fill();
-      ctx.lineWidth = 2.4 * scale;
-      ctx.strokeStyle = col;
-      ctx.globalAlpha = hot ? 1 : 0.55;
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      ctx.beginPath();
-      ctx.arc(0, 0, rad * (p.striker ? 0.34 : 0.24), 0, Math.PI * 2);
-      ctx.fillStyle = p.striker ? C.hot : col;
-      ctx.globalAlpha = hot ? 1 : 0.4;
-      ctx.fill();
-      ctx.globalAlpha = 1;
-      if (drag.current && drag.current.idx === i) {
-        const ring = rad + 4 + Math.sin(pulse * 5) * 2.5;
+      ctx.shadowBlur = hot ? 22 : 12;
+      if (isQueenVisible) {
+        const qg = ctx.createRadialGradient(-rad * 0.2, -rad * 0.25, 1, 0, 0, rad);
+        qg.addColorStop(0, "#FFD0DA");
+        qg.addColorStop(0.45, QUEEN);
+        qg.addColorStop(1, "#8E1230");
         ctx.beginPath();
-        ctx.arc(0, 0, ring, 0, Math.PI * 2);
-        ctx.strokeStyle = C.hot;
-        ctx.globalAlpha = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(pulse * 5));
-        ctx.lineWidth = 1.6;
+        ctx.arc(0, 0, rad, 0, Math.PI * 2);
+        ctx.fillStyle = qg;
+        ctx.fill();
+        ctx.lineWidth = 2;
+        ctx.strokeStyle = "#FFE4EA";
+        ctx.stroke();
+      } else {
+        ctx.beginPath();
+        ctx.arc(0, 0, rad * 0.82, 0, Math.PI * 2);
+        ctx.strokeStyle = col;
+        ctx.lineWidth = Math.max(2.4, rad * 0.34);
+        ctx.globalAlpha = hot ? 1 : 0.9;
         ctx.stroke();
         ctx.globalAlpha = 1;
-      }
-      if (isQueenVisible && !p.sink) {
+        ctx.shadowBlur = 0;
         ctx.beginPath();
-        ctx.arc(0, 0, rad * (1.2 + 0.08 * Math.sin(pulse * 3)), 0, Math.PI * 2);
-        ctx.strokeStyle = theme.canvas.liveGlow;
-        ctx.globalAlpha = 0.7;
-        ctx.lineWidth = 1.5;
+        ctx.arc(0, 0, rad * 0.46, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(4, 8, 18, 0.92)";
+        ctx.fill();
+        ctx.beginPath();
+        ctx.arc(-rad * 0.22, -rad * 0.28, rad * 0.13, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fill();
+        if (p.striker) {
+          ctx.shadowColor = col;
+          ctx.shadowBlur = 14;
+          ctx.beginPath();
+          ctx.arc(0, 0, rad * 0.2, 0, Math.PI * 2);
+          ctx.fillStyle = "#FFFFFF";
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+      }
+      if (drag.current && drag.current.idx === i) {
+        const ring = rad + 5 + Math.sin(pulse * 5) * 2.2;
+        ctx.beginPath();
+        ctx.arc(0, 0, ring, 0, Math.PI * 2);
+        ctx.strokeStyle = col;
+        ctx.globalAlpha = 0.45 + 0.4 * (0.5 + 0.5 * Math.sin(pulse * 5));
+        ctx.lineWidth = 1.6;
+        ctx.shadowBlur = 0;
         ctx.stroke();
         ctx.globalAlpha = 1;
       }
       ctx.restore();
       ctx.shadowBlur = 0;
-      const spd = Math.hypot(p.vx, p.vy);
-      if (spd > 1.4 && hot && !p.sink) {
-        for (let k = 1; k <= 5; k++) {
-          ctx.beginPath();
-          ctx.arc(p.x - p.vx * k * 1.2, p.y - p.vy * k * 1.2, rad * (1 - k * 0.15), 0, Math.PI * 2);
-          ctx.fillStyle = `${col}${Math.round(28 - k * 4).toString(16).padStart(2, "0")}`;
-          ctx.fill();
-        }
-      }
     });
   };
 
@@ -653,209 +677,71 @@ export default function RelayGame({ mode, online, onExit, theme }) {
     c.closePath();
   }
 
-  function drawDiamond(ctx, x, y, r) {
-    ctx.beginPath();
-    ctx.moveTo(x, y - r);
-    ctx.lineTo(x + r, y);
-    ctx.lineTo(x, y + r);
-    ctx.lineTo(x - r, y);
-    ctx.closePath();
-    ctx.fill();
-  }
+  function drawNeonBoard(ctx, g, pulse) {
+    const { S, R, cx, cy } = g;
+    ctx.fillStyle = "#05070e";
+    ctx.fillRect(0, 0, S, S);
 
-  // ---------------- board designs (classic, selectable) ----------------
-  function drawBoardStyle(ctx, g, pulse) {
-    if (theme.boardStyle === "felt") drawFeltBoard(ctx, g);
-    else if (theme.boardStyle === "deco") drawDecoBoard(ctx, g, pulse);
-    else drawCarromBoard(ctx, g);
-  }
-
-  // wooden rail + cream court, corner arrow guides, center queen spot
-  function drawCarromBoard(ctx, g) {
-    const { S, R, pad, cx, cy } = g;
-    const outerX = pad * 0.18, outerY = pad * 0.18;
-    const outerW = S - outerX * 2, outerH = S - outerY * 2;
-
-    const railGrad = ctx.createLinearGradient(0, 0, S, S);
-    railGrad.addColorStop(0, theme.canvas.rail);
-    railGrad.addColorStop(1, theme.canvas.railDeep);
-    ctx.fillStyle = railGrad;
-    rr(ctx, outerX, outerY, outerW, outerH, 18);
-    ctx.fill();
-    ctx.lineWidth = 1.5;
-    ctx.strokeStyle = C.copper;
-    ctx.globalAlpha = 0.8;
-    rr(ctx, outerX, outerY, outerW, outerH, 18);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    const railW = pad * 0.55;
-    const innerX = outerX + railW, innerY = outerY + railW;
-    const innerW = S - innerX * 2, innerH = S - innerY * 2;
-    const courtGrad = ctx.createLinearGradient(innerX, innerY, innerX + innerW, innerY + innerH);
-    courtGrad.addColorStop(0, theme.canvas.surfaceTop);
-    courtGrad.addColorStop(1, theme.canvas.surfaceBottom);
-    ctx.fillStyle = courtGrad;
-    rr(ctx, innerX, innerY, innerW, innerH, 10);
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = C.copper;
-    ctx.globalAlpha = 0.7;
-    rr(ctx, innerX, innerY, innerW, innerH, 10);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // corner arrow guides pointing into each pocket
-    ctx.strokeStyle = C.copper;
-    ctx.lineWidth = 2;
-    ctx.globalAlpha = 0.75;
-    g.pockets.forEach((pk) => {
-      const dx = Math.sign(cx - pk.x), dy = Math.sign(cy - pk.y);
-      ctx.beginPath();
-      ctx.moveTo(pk.x + dx * R * 3.4, pk.y);
-      ctx.lineTo(pk.x + dx * R * 1.6, pk.y + dy * R * 1.6);
-      ctx.lineTo(pk.x, pk.y + dy * R * 3.4);
-      ctx.stroke();
-    });
-    ctx.globalAlpha = 1;
-
-    // center circle + queen spot
-    ctx.beginPath();
-    ctx.arc(cx, cy, R * 2.3, 0, Math.PI * 2);
-    ctx.strokeStyle = C.copper;
-    ctx.lineWidth = 1.5;
-    ctx.globalAlpha = 0.55;
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    ctx.beginPath();
-    ctx.arc(cx, cy, R * 0.4, 0, Math.PI * 2);
-    ctx.fillStyle = "#8B1E2B";
-    ctx.globalAlpha = 0.85;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-
-  // green baize + mahogany rail, gold sight diamonds, baulk arc
-  function drawFeltBoard(ctx, g) {
-    const { S, R, pad, cx } = g;
-    const outerX = pad * 0.18, outerY = pad * 0.18;
-    const outerW = S - outerX * 2, outerH = S - outerY * 2;
-
-    const railGrad = ctx.createLinearGradient(0, 0, S, S);
-    railGrad.addColorStop(0, theme.canvas.rail);
-    railGrad.addColorStop(1, theme.canvas.railDeep);
-    ctx.fillStyle = railGrad;
-    rr(ctx, outerX, outerY, outerW, outerH, 14);
+    const m = S * 0.045;
+    const glass = ctx.createLinearGradient(0, 0, S, S);
+    glass.addColorStop(0, "#10182e");
+    glass.addColorStop(0.5, "#070b16");
+    glass.addColorStop(1, "#0c1424");
+    rr(ctx, m, m, S - m * 2, S - m * 2, S * 0.07);
+    ctx.fillStyle = glass;
     ctx.fill();
 
-    const railW = pad * 0.6;
-    const innerX = outerX + railW, innerY = outerY + railW;
-    const innerW = S - innerX * 2, innerH = S - innerY * 2;
-    const feltGrad = ctx.createLinearGradient(innerX, innerY, innerX + innerW, innerY + innerH);
-    feltGrad.addColorStop(0, theme.canvas.surfaceTop);
-    feltGrad.addColorStop(1, theme.canvas.surfaceBottom);
-    ctx.fillStyle = feltGrad;
-    rr(ctx, innerX, innerY, innerW, innerH, 8);
-    ctx.fill();
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = C.copper;
-    ctx.globalAlpha = 0.6;
-    rr(ctx, innerX, innerY, innerW, innerH, 8);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // rail sight diamonds (like a pool table's cushion markers)
-    ctx.fillStyle = C.copper;
-    ctx.globalAlpha = 0.85;
-    const mid = S / 2;
-    const railMid = outerY + railW / 2;
-    [[mid, railMid], [mid, S - railMid], [railMid, mid], [S - railMid, mid]]
-      .forEach(([x, y]) => drawDiamond(ctx, x, y, 4));
-    ctx.globalAlpha = 1;
-
-    // baulk lines across the near/far rails, each "D" bulging toward its own rail
-    const baulkMargin = innerW * 0.12;
-    ctx.strokeStyle = C.copper;
-    ctx.globalAlpha = 0.45;
-    ctx.lineWidth = 1.5;
-    [
-      { y: innerY + innerH * 0.82, sweep: [0, Math.PI] },       // bottom, D bulges down
-      { y: innerY + innerH * 0.18, sweep: [Math.PI, Math.PI * 2] }, // top, D bulges up
-    ].forEach(({ y, sweep }) => {
-      ctx.beginPath();
-      ctx.moveTo(innerX + baulkMargin, y);
-      ctx.lineTo(innerX + innerW - baulkMargin, y);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(cx, y, R * 2.2, sweep[0], sweep[1]);
-      ctx.stroke();
-    });
-    ctx.globalAlpha = 1;
-  }
-
-  // onyx marble + gold Art Deco lattice, sunburst corner fans
-  function drawDecoBoard(ctx, g, pulse) {
-    const { S, R, pad, cx, cy } = g;
-    const outerX = pad * 0.3, outerY = pad * 0.3;
-    const outerW = S - outerX * 2, outerH = S - outerY * 2;
-
-    const surfGrad = ctx.createLinearGradient(0, 0, S, S);
-    surfGrad.addColorStop(0, theme.canvas.surfaceTop);
-    surfGrad.addColorStop(1, theme.canvas.surfaceBottom);
-    ctx.fillStyle = surfGrad;
-    rr(ctx, outerX, outerY, outerW, outerH, 16);
-    ctx.fill();
-
-    ctx.lineWidth = 2;
-    ctx.strokeStyle = C.copper;
-    ctx.globalAlpha = 0.9;
-    rr(ctx, outerX, outerY, outerW, outerH, 16);
-    ctx.stroke();
-    ctx.lineWidth = 1;
-    ctx.globalAlpha = 0.5;
-    rr(ctx, outerX + 7, outerY + 7, outerW - 14, outerH - 14, 12);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-
-    // diagonal gold lattice
-    ctx.strokeStyle = `rgba(${accentRgb.r},${accentRgb.g},${accentRgb.b},0.16)`;
+    ctx.save();
+    rr(ctx, m + 6, m + 6, S - (m + 6) * 2, S - (m + 6) * 2, S * 0.055);
+    ctx.clip();
+    ctx.strokeStyle = "rgba(90, 170, 255, 0.14)";
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.moveTo(outerX, outerY); ctx.lineTo(outerX + outerW, outerY + outerH);
-    ctx.moveTo(outerX + outerW, outerY); ctx.lineTo(outerX, outerY + outerH);
-    ctx.moveTo(cx, outerY); ctx.lineTo(outerX + outerW, cy);
-    ctx.moveTo(outerX + outerW, cy); ctx.lineTo(cx, outerY + outerH);
-    ctx.moveTo(cx, outerY + outerH); ctx.lineTo(outerX, cy);
-    ctx.moveTo(outerX, cy); ctx.lineTo(cx, outerY);
+    const cells = 6;
+    for (let i = 1; i < cells; i++) {
+      const t = m + ((S - m * 2) * i) / cells;
+      ctx.moveTo(m, t); ctx.lineTo(S - m, t);
+      ctx.moveTo(t, m); ctx.lineTo(t, S - m);
+    }
     ctx.stroke();
-
-    // sunburst fans at each corner
-    ctx.strokeStyle = C.copper;
-    ctx.globalAlpha = 0.55;
-    ctx.lineWidth = 1;
-    const corners = [
-      [outerX, outerY, 0, Math.PI / 2],
-      [outerX + outerW, outerY, Math.PI / 2, Math.PI],
-      [outerX, outerY + outerH, -Math.PI / 2, 0],
-      [outerX + outerW, outerY + outerH, Math.PI, Math.PI * 1.5],
-    ];
-    corners.forEach(([x, y, a0, a1]) => {
-      for (let i = 1; i <= 3; i++) {
-        ctx.beginPath();
-        ctx.arc(x, y, R * i * 0.75, a0, a1);
-        ctx.stroke();
-      }
-    });
-    ctx.globalAlpha = 1;
-
-    // slow pulsing center ring
+    ctx.strokeStyle = "rgba(255, 196, 80, 0.12)";
     ctx.beginPath();
-    ctx.arc(cx, cy, R * 2 + Math.sin(pulse * 2) * 2, 0, Math.PI * 2);
-    ctx.strokeStyle = C.copper;
-    ctx.globalAlpha = 0.35;
-    ctx.lineWidth = 1.5;
+    ctx.moveTo(m, m); ctx.lineTo(S - m, S - m);
+    ctx.moveTo(S - m, m); ctx.lineTo(m, S - m);
+    ctx.moveTo(cx, m); ctx.lineTo(cx, S - m);
+    ctx.moveTo(m, cy); ctx.lineTo(S - m, cy);
     ctx.stroke();
-    ctx.globalAlpha = 1;
+    ctx.strokeStyle = "rgba(255, 196, 90, 0.28)";
+    ctx.lineWidth = 1.25;
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * 3.15 + Math.sin(pulse * 2) * 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx, cy, R * 1.25, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+
+    const frame = ctx.createLinearGradient(0, 0, S, S);
+    frame.addColorStop(0, "#FFB020");
+    frame.addColorStop(0.42, "#FFE7A8");
+    frame.addColorStop(0.58, "#8AD8FF");
+    frame.addColorStop(1, "#2F8CFF");
+    ctx.save();
+    ctx.shadowColor = "#FFB030";
+    ctx.shadowBlur = 18;
+    ctx.lineWidth = Math.max(6, S * 0.018);
+    ctx.strokeStyle = frame;
+    rr(ctx, m, m, S - m * 2, S - m * 2, S * 0.07);
+    ctx.stroke();
+    ctx.shadowColor = "#3DB7FF";
+    ctx.shadowBlur = 22;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.lineWidth = 1.2;
+    ctx.strokeStyle = "rgba(255,255,255,0.16)";
+    rr(ctx, m + 8, m + 8, S - (m + 8) * 2, S - (m + 8) * 2, S * 0.05);
+    ctx.stroke();
   }
 
   // ---------------- input ----------------
@@ -904,7 +790,13 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       const ang = Math.atan2(ay, ax);
       const v = (pow / (g.S * 0.32)) * g.S * 0.036;
       const ev = [];
+      const snap = mode !== "online" ? serialize(g) : null;
       if (launch(g, d0.idx, ang, v, ev)) {
+        if (snap) {
+          history.current.push(snap);
+          if (history.current.length > 20) history.current.shift();
+          setCanUndo(true);
+        }
         drainEvents(ev);
         if (mode === "online") getSocket().emit("flick", { idx: d0.idx, ang, v });
       }
@@ -917,11 +809,6 @@ export default function RelayGame({ mode, online, onExit, theme }) {
     color: col, background: bg, border: `2px solid ${col}`, borderRadius: 10,
     padding: "14px 28px", cursor: "pointer", boxShadow: `0 0 18px ${col}44`,
   });
-  const nameFor = (p) => {
-    if (mode === "ai" && p === 1) return "AI";
-    if (mode === "online") return p === me ? `${PNAME[p]} (YOU)` : PNAME[p];
-    return PNAME[p];
-  };
   const winLabel = () => {
     if (winner === "draw") return "DRAW";
     if (oppLeft) return "OPPONENT LEFT — YOU WIN";
@@ -937,9 +824,31 @@ export default function RelayGame({ mode, online, onExit, theme }) {
       onExit("restart");
     }
   };
+  const undoShot = () => {
+    const g = G.current;
+    if (mode === "online" || !g || g.phase === "resolve" || history.current.length === 0) return;
+    const snap = history.current.pop();
+    applySync(g, snap);
+    drag.current = null;
+    setScores([...g.scores]);
+    setTurn(g.turn);
+    setWinner(g.winner);
+    setStreak(g.streak || 0);
+    setTurnSecLeft(Math.ceil((g.turnTimeLeft || 0) / 60));
+    setTurnToken((t) => t + 1);
+    setCanUndo(history.current.length > 0);
+  };
+  const statusLine = linkNote ? linkNote
+    : winner !== null ? "MATCH OVER"
+    : waitingStart ? "SYNCING…"
+    : mode === "ai" && turn === 1 ? "AI IS ROUTING…"
+    : mode === "online" ? (turn === me ? "YOUR SHOT — FLICK ANY PUCK" : "OPPONENT IS AIMING…")
+    : `${PNAME[turn]} — FLICK ANY PUCK`;
+  const pipOn = streak > 0 ? ((streak - 1) % 3) + 1 : 0;
+  const sideLabel = (p) => (mode === "ai" && p === 1 ? "AI" : PNAME[p]);
 
   return (
-    <div ref={rootRef} style={{ position: "relative", minHeight: "100dvh", width: "100%", background: `linear-gradient(180deg, ${C.board}, ${C.boardDeep})`, color: C.text, fontFamily: "'Space Mono', monospace", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: "12px 0", userSelect: "none", WebkitUserSelect: "none", boxSizing: "border-box" }}>
+    <div ref={rootRef} className="cyber">
       <style>{`
         @keyframes rlInfuse { 0%{transform:scale(1)} 40%{transform:scale(1.28)} 100%{transform:scale(1)} }
         @keyframes rlScore {
@@ -948,7 +857,12 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           100%{opacity:0; transform:translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(.15)}
         }
         @keyframes rlPulse { 0%,100%{opacity:.55} 50%{opacity:1} }
-        @keyframes rlCall { 0%{opacity:0; transform:translateX(-50%) scale(.7)} 15%{opacity:1; transform:translateX(-50%) scale(1.08)} 30%{transform:translateX(-50%) scale(1)} 80%{opacity:1} 100%{opacity:0; transform:translateX(-50%) translateY(-12px)} }
+        @keyframes rlCall { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
+        .callout {
+          position: absolute; top: 11%; left: 10%; right: 10%; text-align: center; pointer-events: none;
+          font-family: 'Orbitron', sans-serif; font-size: 12px; letter-spacing: 1.5px; line-height: 1.35;
+          padding: 6px 8px; border-radius: 12px; background: rgba(5,8,16,.45);
+        }
         @keyframes rlEmote {
           0%{opacity:0; transform:translateX(-50%) translateY(8px) scale(.6)}
           20%{opacity:1; transform:translateX(-50%) translateY(0) scale(1.15)}
@@ -956,6 +870,91 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           75%{opacity:1; transform:translateX(-50%) translateY(-3px) scale(1)}
           100%{opacity:0; transform:translateX(-50%) translateY(-10px) scale(.92)}
         }
+        .cyber {
+          position: relative; min-height: 100dvh; width: 100%; box-sizing: border-box;
+          display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+          padding: max(12px, env(safe-area-inset-top)) 14px max(16px, env(safe-area-inset-bottom));
+          color: #E8F1FF; user-select: none; -webkit-user-select: none;
+          font-family: 'Rajdhani', 'Space Mono', sans-serif;
+          background:
+            radial-gradient(90% 32% at 18% -8%, rgba(255,176,48,.34), transparent 58%),
+            radial-gradient(70% 28% at 92% 0%, rgba(46,140,255,.22), transparent 52%),
+            linear-gradient(180deg, #10141f 0%, #07080f 42%, #05060c 100%);
+        }
+        .topbar { width: min(520px, 100%); display: flex; align-items: center; justify-content: space-between; position: relative; z-index: 4; }
+        .brand { display: flex; align-items: center; gap: 10px; }
+        .brand h1 { margin: 0; font-family: 'Orbitron', 'Audiowide', sans-serif; font-size: clamp(16px, 4.6vw, 22px); letter-spacing: 1px; font-weight: 700; line-height: 1; color: #F4F7FF; }
+        .brand h1 span { color: #FFC14D; }
+        .tag { margin-top: 3px; font-size: 9px; letter-spacing: 2.2px; color: #9aa6c2; font-weight: 600; }
+        .iconrow { display: flex; gap: 8px; }
+        .iconbtn {
+          width: 42px; height: 42px; border-radius: 14px; border: 1px solid rgba(255,255,255,.08);
+          background: rgba(14,18,32,.82); color: #d5dbea; display: grid; place-items: center; cursor: pointer;
+          box-shadow: inset 0 1px 0 rgba(255,255,255,.04), 0 8px 16px rgba(0,0,0,.35);
+        }
+        .iconbtn.on { color: #FFC14D; border-color: rgba(255,193,77,.55); box-shadow: 0 0 16px rgba(255,193,77,.28); }
+        .sheet {
+          position: absolute; top: calc(100% + 8px); right: 0; z-index: 6; width: min(260px, 78vw);
+          padding: 12px 14px; border-radius: 16px; text-align: left;
+          background: rgba(8,12,22,.86); border: 1px solid rgba(255,255,255,.1);
+          backdrop-filter: blur(16px); box-shadow: 0 18px 40px rgba(0,0,0,.5); color: #E8F1FF;
+        }
+        .sheet b { display: block; font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: 2px; color: #FFC14D; margin-bottom: 8px; }
+        .sheet p { margin: 0 0 6px; font-size: 14px; letter-spacing: .3px; }
+        .sheet button { font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: 1px; color: #FFC14D; background: transparent; border: 1px solid rgba(255,193,77,.45); border-radius: 10px; padding: 8px 10px; cursor: pointer; }
+        .scoreline { width: min(520px, 100%); margin-top: 14px; display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
+        .panel {
+          position: relative; min-height: 74px; border-radius: 18px; padding: 8px 10px;
+          display: flex; align-items: center; gap: 8px;
+          background: rgba(8,12,22,.55); backdrop-filter: blur(8px);
+        }
+        .panel.volt { border: 1.5px solid rgba(255,193,77,.9); box-shadow: 0 0 18px rgba(255,176,48,.28), inset 0 0 16px rgba(255,176,48,.06); }
+        .panel.ai { border: 1.5px solid rgba(62,200,255,.9); box-shadow: 0 0 18px rgba(62,180,255,.28), inset 0 0 16px rgba(62,180,255,.06); justify-content: space-between; }
+        .lbl { font-family: 'Orbitron', sans-serif; font-size: 10px; letter-spacing: 2px; line-height: 1.1; }
+        .num { font-family: 'Rajdhani', 'Space Mono', sans-serif; font-size: clamp(32px, 8vw, 40px); font-weight: 700; line-height: .9; }
+        .panel.volt .lbl, .panel.volt .num { color: #FFC14D; text-shadow: 0 0 12px rgba(255,193,77,.45); }
+        .panel.ai .lbl, .panel.ai .num { color: #7FE3FF; text-shadow: 0 0 12px rgba(62,200,255,.4); }
+        .you { display: block; font-style: normal; font-size: 8px; letter-spacing: 1.4px; opacity: .8; }
+        .pips { display: flex; gap: 6px; }
+        .pip {
+          width: 32px; height: 32px; border-radius: 10px; display: grid; place-items: center;
+          font-family: 'Orbitron', sans-serif; font-size: 13px; color: #8ea0c0;
+          background: rgba(12,16,28,.85); border: 1px solid rgba(255,255,255,.08);
+        }
+        .pip.on { color: #FFC14D; border-color: rgba(255,193,77,.95); box-shadow: 0 0 14px rgba(255,193,77,.5); background: rgba(40,28,8,.65); }
+        .prompt {
+          margin: 8px 0 8px; min-height: 16px; font-family: 'Orbitron', sans-serif;
+          font-size: 10px; letter-spacing: 2.2px; color: #FFC14D; text-align: center;
+          text-shadow: 0 0 10px rgba(255,193,77,.35);
+        }
+        .ports { margin-top: -4px; margin-bottom: 6px; font-size: 10px; letter-spacing: 1.6px; color: #FF6A6A; font-family: 'Orbitron', sans-serif; }
+        .stage {
+          position: relative;
+          -webkit-box-reflect: below 4px linear-gradient(transparent 0%, transparent 68%, rgba(0,0,0,.72) 100%);
+          filter: drop-shadow(0 10px 12px rgba(0,0,0,.45));
+        }
+        .floor {
+          width: min(460px, 88%); min-height: 46px; flex: 1; margin-top: 4px; pointer-events: none;
+          background: radial-gradient(ellipse at 50% 18%, rgba(255,186,70,.38), rgba(46,140,255,.14) 46%, transparent 74%);
+          filter: blur(7px);
+        }
+        .dock { width: min(520px, 100%); display: grid; grid-template-columns: 76px 1fr 76px; gap: 12px; align-items: end; }
+        .dock button { cursor: pointer; color: #FFC14D; background: rgba(10,14,24,.78); }
+        .dock .sq {
+          height: 68px; border-radius: 16px; border: 1px solid rgba(255,193,77,.35);
+          display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px;
+          font-family: 'Orbitron', sans-serif; font-size: 8px; letter-spacing: 1.4px;
+          box-shadow: inset 0 0 12px rgba(255,193,77,.05);
+        }
+        .dock .wide {
+          height: 54px; border-radius: 18px; border: 1.5px solid rgba(255,193,77,.8);
+          display: flex; align-items: center; justify-content: center; gap: 8px;
+          font-family: 'Orbitron', sans-serif; font-size: clamp(12px, 3.4vw, 15px); letter-spacing: 3px;
+          box-shadow: 0 0 22px rgba(255,176,48,.32), inset 0 0 14px rgba(255,193,77,.08);
+        }
+        .dock button:disabled { opacity: .35; cursor: default; }
+        .emotes { display: flex; gap: 6px; margin-top: 8px; }
+        .emotes button { font-size: 16px; padding: 4px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); background: transparent; cursor: pointer; }
         @media (prefers-reduced-motion: reduce){ *{animation:none !important} }
       `}</style>
 
@@ -964,109 +963,176 @@ export default function RelayGame({ mode, online, onExit, theme }) {
           key={fx.id}
           style={{
             position: "absolute", left: fx.x, top: fx.y, zIndex: 40, pointerEvents: "none",
-            color: fx.color, fontFamily: "'Audiowide', sans-serif", fontSize: 22, letterSpacing: 1,
+            color: fx.color, fontFamily: "'Orbitron', sans-serif", fontSize: 22, letterSpacing: 1,
             textShadow: `0 0 16px ${fx.color}`,
             animation: "rlScore 680ms cubic-bezier(.22,.8,.2,1) forwards",
             "--dx": `${fx.dx}px`, "--dy": `${fx.dy}px`,
           }}
         >+{fx.pts}</div>
       ))}
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", width: "100%", maxWidth: size, padding: "4px 4px 8px", gap: 8 }}>
-        {[0, 1].map((p) => (
-          <div key={p} style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 2, padding: "8px 14px", borderRadius: 10, background: C.panel, border: `1px solid ${turn === p && winner === null ? players[p] : C.line}`, boxShadow: turn === p && winner === null ? `0 0 14px ${players[p]}44` : "none", minWidth: 88, position: "relative", overflow: "visible" }}>
-            <div ref={(el) => { nameRefs.current[p] = el; }} key={`name-${p}-${nameFlash[p] || 0}`} style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 8, letterSpacing: 1.5, color: players[p], whiteSpace: "nowrap", animation: nameFlash[p] ? "rlInfuse 420ms ease-out" : undefined, textShadow: nameFlash[p] ? `0 0 12px ${players[p]}` : "none" }}>{nameFor(p)}</div>
-            <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 24, color: players[p] }}>{scores[p]}</div>
-            {emoteFx && emoteFx.side === p && (
-              <div key={emoteFx.key} style={{ position: "absolute", top: -18, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
-            )}
-            {turn === p && winner === null && !waitingStart && (
-              <svg key={`clock-${turnToken}`} width="100%" height="100%" style={{ position: "absolute", inset: 0, pointerEvents: "none", overflow: "visible" }}>
-                <rect
-                  x="1" y="1" width="calc(100% - 2px)" height="calc(100% - 2px)"
-                  rx="9" ry="9" fill="none"
-                  strokeWidth="2.5"
-                  pathLength="100"
-                  strokeDasharray="100"
-                  style={{
-                    stroke: turnSecLeft <= 5 ? "#FF6A6A" : players[p],
-                    strokeDashoffset: Math.max(0, Math.min(100, (1 - turnSecLeft / TURN_SECONDS) * 100)),
-                    transition: "stroke-dashoffset 1.05s linear, stroke 0.3s ease-out",
-                  }}
-                />
-              </svg>
-            )}
+
+      <header className="topbar">
+        <div className="brand">
+          <svg width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path fill="#FFC14D" d="M13 1.5 3.5 13.5h7.2L9.2 22.5 20.5 9.2h-7.1L13 1.5z"/></svg>
+          <div>
+            <h1>RELAY<span>PUCK</span></h1>
+            <div className="tag">FLICK · PASS · CONTROL</div>
           </div>
-        ))}
-      </div>
-      <div style={{ position: "absolute", top: 18, left: "50%", transform: "translateX(-50%)", display: "flex", flexDirection: "column", alignItems: "center" }}>
-        {winner === null && !waitingStart && portsIn !== null && (
-          <div style={{ fontSize: 8, letterSpacing: 1, color: portsIn <= 3 ? "#FF6A6A" : C.copper, marginTop: 2, animation: portsIn <= 3 ? "rlPulse 0.6s infinite" : "none" }}>
-            PORTS SHIFT {portsIn}s
+        </div>
+        <div className="iconrow">
+          <button type="button" className={sheet === "stats" ? "iconbtn on" : "iconbtn"} aria-label="Match stats" onClick={() => setSheet((s) => s === "stats" ? null : "stats")}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M5 19V10M12 19V5M19 19v-7"/></svg>
+          </button>
+          <button type="button" className={sheet === "trophy" ? "iconbtn on" : "iconbtn"} aria-label="Scoring" onClick={() => setSheet((s) => s === "trophy" ? null : "trophy")} style={{ color: "#FFC14D" }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M8 4h8v3a4 4 0 0 1-8 0V4z"/><path d="M8 6H5a3 3 0 0 0 3 4M16 6h3a3 3 0 0 1-3 4M12 11v3M9 20h6M10 17h4v3h-4z"/></svg>
+          </button>
+          <button type="button" className={sheet === "gear" ? "iconbtn on" : "iconbtn"} aria-label="Settings" onClick={() => setSheet((s) => s === "gear" ? null : "gear")}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M3.5 12h2.2M18.3 12h2.2M6 6l1.6 1.6M16.4 16.4 18 18M18 6l-1.6 1.6M7.6 16.4 6 18"/></svg>
+          </button>
+        </div>
+        {sheet && (
+          <div className="sheet" role="dialog">
+            {sheet === "stats" && (
+              <>
+                <b>MATCH</b>
+                <p>Clock {winner === null && !waitingStart ? `${turnSecLeft}s` : "—"}</p>
+                <p>Ports {portsIn === null ? "holding" : `${portsIn}s`}</p>
+                <p>Relay chain {streak || 0}</p>
+              </>
+            )}
+            {sheet === "trophy" && (
+              <>
+                <b>SCORING</b>
+                <p>Charged puck in the live port +1</p>
+                <p>Queen +5</p>
+                <p>3 in a row +1 bonus</p>
+                <p>Your striker sunk gives the rival +1</p>
+              </>
+            )}
+            {sheet === "gear" && (
+              <>
+                <b>ARENA</b>
+                <button type="button" onClick={() => {
+                  const next = !muted;
+                  setMuted(next);
+                  if (sfx.current) sfx.current.state.muted = next;
+                }}>{muted ? "SOUND OFF" : "SOUND ON"}</button>
+                {mode === "online" && (
+                  <div className="emotes">
+                    {EMOTES.map((em) => (
+                      <button key={em} type="button" onClick={() => {
+                        getSocket().emit("emote", { emote: em });
+                        setEmoteFx({ emote: em, side: me, key: Date.now() });
+                        setTimeout(() => setEmoteFx(null), 1800);
+                      }}>{em}</button>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
         )}
+      </header>
+
+      <div className="scoreline">
+        <div className="panel volt">
+          <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden="true"><path fill="#FFC14D" d="M13 1.5 3.5 13.5h7.2L9.2 22.5 20.5 9.2h-7.1L13 1.5z"/></svg>
+          <div>
+            <div ref={(el) => { nameRefs.current[0] = el; }} key={`name-0-${nameFlash[0] || 0}`} className="lbl" style={{ animation: nameFlash[0] ? "rlInfuse 420ms ease-out" : undefined }}>{sideLabel(0)}</div>
+            {mode === "online" && me === 0 && <i className="you">YOU</i>}
+            <div className="num">{scores[0]}</div>
+          </div>
+          {emoteFx && emoteFx.side === 0 && (
+            <div key={emoteFx.key} style={{ position: "absolute", top: -22, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
+          )}
+          {turn === 0 && winner === null && !waitingStart && (
+            <svg key={`clock-0-${turnToken}`} width="100%" height="100%" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+              <rect x="1.5" y="1.5" width="calc(100% - 3px)" height="calc(100% - 3px)" rx="16" fill="none" strokeWidth="2" pathLength="100" strokeDasharray="100"
+                style={{ stroke: turnSecLeft <= 5 ? "#FF6A6A" : GOLD, strokeDashoffset: Math.max(0, Math.min(100, (1 - turnSecLeft / TURN_SECONDS) * 100)), transition: "stroke-dashoffset 1.05s linear" }} />
+            </svg>
+          )}
+        </div>
+        <div className="pips" aria-label="Relay chain">
+          {[1, 2, 3].map((n) => <div key={n} className={pipOn === n ? "pip on" : "pip"}>{n}</div>)}
+        </div>
+        <div className="panel ai">
+          <div>
+            <div ref={(el) => { nameRefs.current[1] = el; }} key={`name-1-${nameFlash[1] || 0}`} className="lbl" style={{ animation: nameFlash[1] ? "rlInfuse 420ms ease-out" : undefined }}>{sideLabel(1)}</div>
+            {mode === "online" && me === 1 && <i className="you">YOU</i>}
+            <div className="num">{scores[1]}</div>
+          </div>
+          {mode === "ai" && (
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#7FE3FF" strokeWidth="1.6" aria-hidden="true">
+              <rect x="4" y="8" width="16" height="11" rx="4"/>
+              <circle cx="9" cy="13.5" r="1.2" fill="#7FE3FF"/>
+              <circle cx="15" cy="13.5" r="1.2" fill="#7FE3FF"/>
+              <path d="M12 8V4.5M9 4.5h6"/>
+            </svg>
+          )}
+          {emoteFx && emoteFx.side === 1 && (
+            <div key={emoteFx.key} style={{ position: "absolute", top: -22, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
+          )}
+          {turn === 1 && winner === null && !waitingStart && (
+            <svg key={`clock-1-${turnToken}`} width="100%" height="100%" style={{ position: "absolute", inset: 0, pointerEvents: "none" }}>
+              <rect x="1.5" y="1.5" width="calc(100% - 3px)" height="calc(100% - 3px)" rx="16" fill="none" strokeWidth="2" pathLength="100" strokeDasharray="100"
+                style={{ stroke: turnSecLeft <= 5 ? "#FF6A6A" : BLUE, strokeDashoffset: Math.max(0, Math.min(100, (1 - turnSecLeft / TURN_SECONDS) * 100)), transition: "stroke-dashoffset 1.05s linear" }} />
+            </svg>
+          )}
+        </div>
       </div>
 
-      <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 10, letterSpacing: 3, color: linkNote ? "#FF6A6A" : players[turn], margin: "2px 0 8px", animation: "rlPulse 1.6s infinite", minHeight: 14 }}>
-        {linkNote ? linkNote
-          : winner !== null ? " "
-          : waitingStart ? "SYNCING…"
-          : mode === "ai" && turn === 1 ? "AI IS ROUTING…"
-          : mode === "online" ? (turn === me ? "YOUR SHOT — FLICK ANY PUCK" : "OPPONENT IS AIMING…")
-          : `${PNAME[turn]} — FLICK ANY PUCK`}
-      </div>
-      <div style={{ position: "relative" }}>
+      <div className="prompt" style={{ animation: "rlPulse 1.6s infinite", color: linkNote ? "#FF6A6A" : GOLD }}>{statusLine}</div>
+      {winner === null && !waitingStart && portsIn !== null && (
+        <div className="ports" style={{ animation: portsIn <= 3 ? "rlPulse 0.6s infinite" : "none" }}>PORTS SHIFT {portsIn}s</div>
+      )}
+
+      <div className="stage">
         <canvas
           ref={canvasRef}
-          style={{ width: size, height: size, touchAction: "none", cursor: "crosshair", display: "block" }}
+          style={{ width: size, height: size, touchAction: "none", cursor: "crosshair", display: "block", borderRadius: 28 }}
           onPointerDown={onDown}
           onPointerMove={onMove}
           onPointerUp={onUp}
           onPointerCancel={onUp}
         />
         {callout && (
-          <div style={{ position: "absolute", top: "6%", left: "50%", transform: "translateX(-50%)", fontFamily: "'Audiowide', sans-serif", fontSize: 13, letterSpacing: 3, color: callout.col, textShadow: `0 0 12px ${callout.col}`, animation: "rlCall 1.5s ease-out forwards", whiteSpace: "nowrap", pointerEvents: "none" }}>
+          <div className="callout" style={{ color: callout.col, textShadow: `0 0 12px ${callout.col}`, animation: "rlCall 1.5s ease-out forwards" }}>
             {callout.text}
           </div>
         )}
       </div>
+      <div className="floor" />
 
-      {/* controls row */}
-      <div style={{ display: "flex", gap: 10, marginTop: 12, alignItems: "center" }}>
-        {mode === "online" ? (
-          EMOTES.map((em) => (
-            <button key={em} style={{ background: C.panel, border: `1px solid ${C.line}`, borderRadius: 8, fontSize: 18, padding: "6px 10px", cursor: "pointer" }}
-              onClick={() => {
-                getSocket().emit("emote", { emote: em });
-                setEmoteFx({ emote: em, side: me, key: Date.now() });
-                setTimeout(() => setEmoteFx(null), 1800);
-              }}>
-              {em}
-            </button>
-          ))
-        ) : (
-          <button style={{ ...btn(C.panel, C.dim), padding: "8px 18px", fontSize: 10, boxShadow: "none", border: `1px solid ${C.line}` }} onClick={() => onExit("restart")}>RESTART</button>
-        )}
-        <button style={{ ...btn(C.panel, C.dim), padding: "8px 18px", fontSize: 10, boxShadow: "none", border: `1px solid ${C.line}` }} onClick={() => onExit("menu")}>
-          {mode === "online" ? "LEAVE" : "MENU"}
+      <div className="dock">
+        <button type="button" className="sq" onClick={undoShot} disabled={mode === "online" || !canUndo} aria-label="Undo">
+          <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"><path fill="#FFC14D" d="M13 2 4 14h7l-1 8 10-14h-7l0-6z"/></svg>
+          UNDO
+        </button>
+        <button type="button" className="wide" onClick={() => { if (mode !== "online") onExit("restart"); }} disabled={mode === "online"}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFC14D" strokeWidth="1.8"><path d="M20 12a8 8 0 1 1-2.2-5.5"/><path d="M20 4v5h-5"/></svg>
+          RESTART
+        </button>
+        <button type="button" className="sq" onClick={() => onExit("menu")} aria-label="Menu">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFC14D" strokeWidth="1.8"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
+          MENU
         </button>
       </div>
 
-      {/* win overlay */}
       {winner !== null && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(3,8,5,0.88)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, zIndex: 10, animation: "rlIn .35s ease-out", padding: 20, textAlign: "center" }}>
-          <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 12, letterSpacing: 5, color: C.dim }}>
+        <div style={{ position: "fixed", inset: 0, background: "rgba(5,6,12,0.88)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 14, zIndex: 10, padding: 20, textAlign: "center", backdropFilter: "blur(8px)" }}>
+          <div style={{ fontFamily: "'Orbitron', sans-serif", fontSize: 12, letterSpacing: 5, color: C.dim }}>
             {winner === "draw" ? "CIRCUIT BALANCED" : "FINAL"}
           </div>
-          <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: "clamp(26px, 7vw, 44px)", letterSpacing: 3, color: winner === "draw" ? C.text : players[winner === "draw" ? 0 : winner], textShadow: winner === "draw" ? "none" : `0 0 24px ${players[winner]}` }}>
+          <div style={{ fontFamily: "'Orbitron', sans-serif", fontSize: "clamp(26px, 7vw, 44px)", letterSpacing: 2, color: winner === "draw" ? C.text : players[winner === "draw" ? 0 : winner], textShadow: winner === "draw" ? "none" : `0 0 24px ${players[winner]}` }}>
             {winLabel()}
           </div>
-          <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 20, color: C.dim }}>
+          <div style={{ fontFamily: "'Orbitron', sans-serif", fontSize: 20, color: C.dim }}>
             <span style={{ color: players[0] }}>{scores[0]}</span> — <span style={{ color: players[1] }}>{scores[1]}</span>
           </div>
           <div style={{ height: 10 }} />
           {!oppLeft && (
             <button
-              style={btn("#0E2415", winner === "draw" ? C.text : players[winner === "draw" ? 0 : winner])}
+              style={btn("rgba(12,18,16,0.4)", winner === "draw" ? C.text : players[winner === "draw" ? 0 : winner])}
               onClick={handleRematch}
               disabled={rematchState === "sent"}
             >
@@ -1076,7 +1142,7 @@ export default function RelayGame({ mode, online, onExit, theme }) {
                 : "REMATCH"}
             </button>
           )}
-          <button style={{ ...btn(C.panel, C.dim), boxShadow: "none", border: `1px solid ${C.line}`, fontSize: 11, padding: "10px 20px" }} onClick={() => onExit("menu")}>MENU</button>
+          <button type="button" style={{ ...btn("transparent", C.dim), boxShadow: "none", border: `1px solid ${C.line}`, fontSize: 11, padding: "10px 20px" }} onClick={() => onExit("menu")}>MENU</button>
         </div>
       )}
     </div>

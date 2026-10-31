@@ -2,7 +2,6 @@ import { useCallback, useEffect, useState } from "react";
 import RelayGame from "./RelayGame.jsx";
 import RelayIntro from "./RelayIntro.jsx";
 import { getSocket, SERVER_URL, loadIdentity, saveName, saveResume, loadResume, helloPayload, saveToken, signup, login, logout, rotateGuestId, googleAuth } from "./net.js";
-import { THEMES, getTheme, loadStoredThemeId, storeThemeId } from "./themes.js";
 
 export default function App() {
   const [screen, setScreen] = useState("menu"); // menu | online | game
@@ -24,14 +23,11 @@ export default function App() {
   const [authBusy, setAuthBusy] = useState(false);
   const [googleClientId, setGoogleClientId] = useState("");
   const dismissIntro = useCallback(() => setIntro(false), []);
-  const [themeId, setThemeId] = useState(loadStoredThemeId);
-  const theme = getTheme(themeId);
   const C = {
-    board: theme.ui.board, boardDeep: theme.ui.boardDeep, panel: theme.ui.panel, line: theme.ui.line,
-    copper: theme.accent, volt: theme.players[0], amp: theme.players[1], hot: theme.ui.hot,
-    text: theme.ui.text, dim: theme.ui.dim,
+    board: "#07080f", boardDeep: "#05060c", panel: "#12182a", line: "rgba(255,255,255,0.1)",
+    copper: "#FFC14D", volt: "#FFC14D", amp: "#3EC8FF", hot: "#FFF6D8",
+    text: "#E8F1FF", dim: "#8EA0C0",
   };
-  const chooseTheme = (id) => { setThemeId(id); storeThemeId(id); };
 
   // socket lifecycle — App owns matchmaking events
   useEffect(() => {
@@ -357,7 +353,6 @@ export default function App() {
         mode={mode}
         online={mode === "online" ? session : null}
         onExit={exitGame}
-        theme={theme}
       />
     );
   }
@@ -467,41 +462,6 @@ export default function App() {
       <button style={btn("#241708", C.amp)} onClick={() => startLocal("ai")}>PLAY VS AI</button>
       <button style={{ ...btn(C.panel, C.text), boxShadow: "none", border: `1px solid ${C.line}` }} onClick={() => startLocal("pvp")}>PASS &amp; PLAY</button>
 
-      <div style={{ marginTop: 28, width: "100%", maxWidth: 360 }}>
-        <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 10, letterSpacing: 3, color: C.dim, marginBottom: 10 }}>
-          BOARD THEME
-        </div>
-        <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "center", gap: 10 }}>
-          {THEMES.map((t) => {
-            const selected = t.id === themeId;
-            return (
-              <button
-                key={t.id}
-                onClick={() => chooseTheme(t.id)}
-                title={t.tagline}
-                style={{
-                  display: "flex", flexDirection: "column", alignItems: "center", gap: 6,
-                  width: 90, padding: "10px 6px", borderRadius: 10, cursor: "pointer",
-                  background: t.ui.panel, border: `2px solid ${selected ? t.accent : t.ui.line}`,
-                  boxShadow: selected ? `0 0 14px ${t.accent}66` : "none",
-                }}
-              >
-                <div style={{ display: "flex", gap: 4 }}>
-                  {t.swatch.map((sw, i) => (
-                    <span key={i} style={{
-                      width: 14, height: 14, borderRadius: "50%", background: sw,
-                      border: `1px solid ${t.ui.line}`, boxShadow: i > 0 ? `0 0 5px ${sw}88` : "none",
-                    }} />
-                  ))}
-                </div>
-                <div style={{ fontFamily: "'Audiowide', sans-serif", fontSize: 8, letterSpacing: 1, color: t.ui.text, textAlign: "center", lineHeight: 1.3 }}>
-                  {t.name}
-                </div>
-              </button>
-            );
-          })}
-        </div>
-      </div>
       </div>
       {intro && (
         <RelayIntro
@@ -512,11 +472,11 @@ export default function App() {
             volt: C.volt,
             amp: C.amp,
             accent: C.copper,
-            rail: theme.canvas.rail,
-            feltTop: theme.canvas.surfaceTop,
-            feltBottom: theme.canvas.surfaceBottom,
-            puck: theme.neutral,
-            pocket: theme.canvas.holeInner,
+            rail: "#1a2744",
+            feltTop: "#12182c",
+            feltBottom: "#070b16",
+            puck: "#8FD4FF",
+            pocket: "#05070e",
             face: "#F7F3EA",
             text: C.text,
           }}
