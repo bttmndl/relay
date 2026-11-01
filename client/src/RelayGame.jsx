@@ -114,6 +114,7 @@ export default function RelayGame({ mode, online, onExit }) {
   const applyServerRef = useRef(() => {});
   const gate = useRef({ waiting: mode === "online" && !online?.resumed });
   const [confirming, setConfirming] = useState(false);
+  const [leaveAsk, setLeaveAsk] = useState(false);
   const me = mode === "online" ? online.playerIndex : null;
   gate.current.waiting = waitingStart;
 
@@ -1085,6 +1086,10 @@ export default function RelayGame({ mode, online, onExit }) {
           font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: 2px; color: #FFC14D;
           background: transparent; border: 1px solid rgba(255,193,77,.5); border-radius: 12px; padding: 10px;
         }
+        .statcard .ask { margin: 0 0 14px; font-size: 15px; letter-spacing: .3px; line-height: 1.35; color: #E8F1FF; }
+        .statcard .askrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+        .statcard .askrow button { margin-top: 0; }
+        .statcard button.ghost { color: #9aa6c2; border-color: rgba(255,255,255,.16); }
         .emotes { display: flex; gap: 6px; margin-top: 8px; }
         .emotes button { font-size: 16px; padding: 4px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,.12); background: transparent; cursor: pointer; }
         @media (prefers-reduced-motion: reduce){ *{animation:none !important} }
@@ -1236,11 +1241,24 @@ export default function RelayGame({ mode, online, onExit }) {
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFC14D" strokeWidth="1.8"><path d="M20 12a8 8 0 1 1-2.2-5.5"/><path d="M20 4v5h-5"/></svg>
           RESTART
         </button>
-        <button type="button" className="sq" onClick={() => onExit("menu")} aria-label="Menu">
+        <button type="button" className="sq" onClick={() => setLeaveAsk(true)} aria-label="Menu">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#FFC14D" strokeWidth="1.8"><path d="M5 7h14M5 12h14M5 17h14"/></svg>
           MENU
         </button>
       </div>
+
+      {leaveAsk && (
+        <div className="statov" style={{ zIndex: 12 }} onClick={() => setLeaveAsk(false)}>
+          <div className="statcard" role="dialog" aria-label="Leave match" onClick={(e) => e.stopPropagation()}>
+            <b>LEAVE MATCH</b>
+            <p className="ask">Are you sure you want to close the game?</p>
+            <div className="askrow">
+              <button type="button" className="ghost" onClick={() => setLeaveAsk(false)}>STAY</button>
+              <button type="button" onClick={() => onExit("menu")}>CLOSE</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {sheet === "stats" && (
         <div className="statov" onClick={() => setSheet(null)}>
@@ -1281,7 +1299,7 @@ export default function RelayGame({ mode, online, onExit }) {
                 : "REMATCH"}
             </button>
           )}
-          <button type="button" style={{ ...btn("transparent", C.dim), boxShadow: "none", border: `1px solid ${C.line}`, fontSize: 11, padding: "10px 20px" }} onClick={() => onExit("menu")}>MENU</button>
+          <button type="button" style={{ ...btn("transparent", C.dim), boxShadow: "none", border: `1px solid ${C.line}`, fontSize: 11, padding: "10px 20px" }} onClick={() => setLeaveAsk(true)}>MENU</button>
         </div>
       )}
     </div>
