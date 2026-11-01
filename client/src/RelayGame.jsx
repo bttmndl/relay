@@ -380,7 +380,7 @@ export default function RelayGame({ mode, online, onExit }) {
       const { pending } = portRotateInfo(g);
       const nextPortsIn = pending ? Math.ceil(pending.framesLeft / 60) : null;
       if (nextPortsIn !== lastPortsIn) { lastPortsIn = nextPortsIn; setPortsIn(nextPortsIn); }
-      const nextTurnSec = g.phase === "aim" ? Math.ceil(g.turnTimeLeft / 60) : TURN_SECONDS;
+      const nextTurnSec = g.winner !== null ? 0 : Math.max(0, Math.ceil((g.turnTimeLeft || 0) / 60));
       if (nextTurnSec !== lastTurnSec) { lastTurnSec = nextTurnSec; setTurnSecLeft(nextTurnSec); }
       raf = requestAnimationFrame(loop);
     };
@@ -898,6 +898,22 @@ export default function RelayGame({ mode, online, onExit }) {
     : `${PNAME[turn]} — FLICK ANY PUCK`;
   const pipOn = streak > 0 ? ((streak - 1) % 3) + 1 : 0;
   const sideLabel = (p) => (mode === "ai" && p === 1 ? "AI" : PNAME[p]);
+  const turnClock = (side, color) => {
+    if (winner !== null || waitingStart || turn !== side) return null;
+    const arc = 2 * Math.PI * 15;
+    const frac = Math.max(0, Math.min(1, turnSecLeft / TURN_SECONDS));
+    const stroke = turnSecLeft <= 5 ? "#FF6A6A" : color;
+    return (
+      <div className={turnSecLeft <= 5 ? "timer low" : "timer"} aria-label={`${turnSecLeft} seconds left`}>
+        <svg viewBox="0 0 36 36" aria-hidden="true">
+          <circle cx="18" cy="18" r="15" fill="none" stroke="rgba(255,255,255,.14)" strokeWidth="2.2" />
+          <circle cx="18" cy="18" r="15" fill="none" stroke={stroke} strokeWidth="2.5" strokeLinecap="round"
+            strokeDasharray={`${frac * arc} ${arc}`} transform="rotate(-90 18 18)" />
+        </svg>
+        <span>{turnSecLeft}</span>
+      </div>
+    );
+  };
 
   return (
     <div ref={rootRef} className="cyber">
@@ -957,7 +973,7 @@ export default function RelayGame({ mode, online, onExit }) {
         .scoreline { width: min(520px, 100%); margin-top: 14px; display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
         .panel {
           position: relative; min-height: 78px; border-radius: 18px; box-sizing: border-box;
-          display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 10px;
+          display: flex; align-items: center; gap: 8px; padding: 8px 36px 8px 10px;
           background: rgba(8,12,22,.62); backdrop-filter: blur(10px);
         }
         .panel.volt {
@@ -998,6 +1014,17 @@ export default function RelayGame({ mode, online, onExit }) {
           box-shadow: 0 0 12px rgba(62,200,255,.28), inset 0 0 10px rgba(62,200,255,.12);
         }
         .you { display: block; font-style: normal; font-size: 8px; letter-spacing: 1.4px; opacity: .75; }
+        .timer {
+          position: absolute; top: 8px; right: 7px; width: 28px; height: 28px;
+          display: grid; place-items: center; pointer-events: none;
+        }
+        .timer svg { position: absolute; inset: 0; }
+        .timer span {
+          position: relative; font-family: 'Rajdhani', sans-serif; font-size: 13px; font-weight: 700; line-height: 1;
+        }
+        .panel.volt .timer span { color: #FFC14D; }
+        .panel.ai .timer span { color: #7FE3FF; }
+        .timer.low span { color: #FF6A6A; text-shadow: 0 0 8px rgba(255,106,106,.7); }
         .pips { display: flex; gap: 6px; }
         .pip {
           width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
@@ -1128,6 +1155,7 @@ export default function RelayGame({ mode, online, onExit }) {
             {mode === "online" && me === 0 && <i className="you">YOU</i>}
             <div className="chip">{scores[0]}</div>
           </div>
+          {turnClock(0, GOLD)}
           {emoteFx && emoteFx.side === 0 && (
             <div key={emoteFx.key} style={{ position: "absolute", top: -22, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
           )}
@@ -1154,6 +1182,7 @@ export default function RelayGame({ mode, online, onExit }) {
             {mode === "online" && me === 1 && <i className="you">YOU</i>}
             <div className="chip">{scores[1]}</div>
           </div>
+          {turnClock(1, BLUE)}
           {emoteFx && emoteFx.side === 1 && (
             <div key={emoteFx.key} style={{ position: "absolute", top: -22, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
           )}
