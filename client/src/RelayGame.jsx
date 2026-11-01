@@ -36,6 +36,11 @@ function makeSfx() {
     pot: () => { blip(520, 780, 0.12, "sine", 0.1); setTimeout(() => blip(780, 1170, 0.16, "sine", 0.09), 70); },
     poison: () => blip(300, 70, 0.5, "sawtooth", 0.12),
     reject: () => blip(240, 60, 0.22, "square", 0.09),
+    tick: (sec = 5) => blip(sec <= 2 ? 1180 : 740, 200, 0.04, "square", sec <= 2 ? 0.075 : 0.05),
+    clockEnd: () => {
+      blip(520, 110, 0.12, "square", 0.09);
+      setTimeout(() => blip(180, 50, 0.32, "sawtooth", 0.1), 80);
+    },
     win: () => { blip(330, 660, 0.3, "sine", 0.1); setTimeout(() => blip(495, 990, 0.4, "sine", 0.1), 150); },
     state,
   };
@@ -229,7 +234,7 @@ export default function RelayGame({ mode, online, onExit }) {
       if (reason) say(reason, "#FF6A6A", 1200);
       if (decision.announceTimeout && snap.turn !== prevTurn) {
         drag.current = null;
-        sfx.current?.reject();
+        sfx.current?.clockEnd();
         setTurnToken((t) => t + 1);
         say("TIME'S UP — TURN PASSED", "#FF6A6A", 1500);
       }
@@ -295,7 +300,7 @@ export default function RelayGame({ mode, online, onExit }) {
       else if (e.t === "queenShift") say("QUEEN RESET", QUEEN, 1200);
       else if (e.t === "turnTimeout") {
         drag.current = null;
-        sfx.current?.reject();
+        sfx.current?.clockEnd();
         setTurnToken((t) => t + 1);
         say("TIME'S UP — TURN PASSED", "#FF6A6A", 1500);
       }
@@ -426,6 +431,14 @@ export default function RelayGame({ mode, online, onExit }) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [size]);
+
+  const heardSec = useRef(TURN_SECONDS);
+  useEffect(() => {
+    const prev = heardSec.current;
+    heardSec.current = turnSecLeft;
+    if (winner !== null || waitingStart) return;
+    if (turnSecLeft < prev && turnSecLeft <= 5 && turnSecLeft >= 1) sfx.current?.tick(turnSecLeft);
+  }, [turnSecLeft, winner, waitingStart]);
 
   const render = (ctx, g, pulse) => {
     const { S, R, pad } = g;
@@ -901,9 +914,11 @@ export default function RelayGame({ mode, online, onExit }) {
   const turnClock = (side, color) => {
     if (winner !== null || waitingStart || turn !== side) return null;
     const gone = (1 - Math.max(0, Math.min(1, turnSecLeft / TURN_SECONDS))) * 100;
-    const stroke = turnSecLeft <= 5 ? "#FF6A6A" : color;
+    const warn = turnSecLeft <= 5;
+    const stroke = warn ? "#FF6A6A" : color;
+    const klass = !warn ? "clockborder" : turnSecLeft <= 2 ? "clockborder warn fast" : "clockborder warn";
     return (
-      <svg key={turnToken} className="clockborder" aria-hidden="true">
+      <svg key={turnToken} className={klass} aria-hidden="true">
         <rect className="clocktrack" />
         <rect className="clockhand" pathLength="100" style={{ stroke, strokeDashoffset: gone }} />
       </svg>
@@ -920,6 +935,7 @@ export default function RelayGame({ mode, online, onExit }) {
           100%{opacity:0; transform:translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(.15)}
         }
         @keyframes rlPulse { 0%,100%{opacity:.55} 50%{opacity:1} }
+        @keyframes rlShutter { 0%, 45% { opacity: 1; } 50%, 100% { opacity: 0.12; } }
         @keyframes rlCall { 0%{opacity:0} 15%{opacity:1} 80%{opacity:1} 100%{opacity:0} }
         .callout {
           position: absolute; top: 11%; left: 10%; right: 10%; text-align: center; pointer-events: none;
@@ -1018,6 +1034,8 @@ export default function RelayGame({ mode, online, onExit }) {
         .panel.volt .clocktrack { stroke: rgba(255,193,77,.35); }
         .panel.ai .clocktrack { stroke: rgba(127,227,255,.35); }
         .clockhand { stroke-linecap: round; stroke-dasharray: 100; transition: stroke-dashoffset 1s linear; }
+        .clockborder.warn { animation: rlShutter .14s steps(1, end) infinite; filter: drop-shadow(0 0 5px #FF6A6A); }
+        .clockborder.warn.fast { animation-duration: .08s; }
         .pips { display: flex; gap: 6px; }
         .pip {
           width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
