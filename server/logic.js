@@ -130,25 +130,34 @@ export function attemptFlick(room, playerIndex, payload) {
   if (!puck || !puck.alive) return { ok: false, reason: "That puck is gone" };
   const ev = [];
   if (!launch(g, idx, ang, v, ev)) return { ok: false, reason: "Flick rejected" };
-  let guard = 0;
-  while (g.phase === "resolve" && guard < 900) {
-    stepGame(g, ev);
-    guard++;
-  }
-  return { ok: true, snap: serialize(g) };
+  // Leave the shot in flight. Sweep steps it at the same rate as a local
+  // game so both players see the pucks move, then get one settled result.
+  return { ok: true, shot: g.shot };
 }
 
-export function advanceAim(room, frames) {
+export function advanceRoom(room, frames) {
   const g = room.game;
-  if (!room.started || g.phase !== "aim" || g.winner !== null) {
-    return { event: false, snap: serialize(g) };
+  if (!room.started || g.winner !== null) {
+    return { event: false, shotEnded: false, resolving: g.phase === "resolve", snap: serialize(g) };
   }
   const turn = g.turn;
   const port = g.livePort;
-  const winner = g.winner;
+  const score = `${g.scores[0]}:${g.scores[1]}`;
+  const wasResolve = g.phase === "resolve";
   for (let i = 0; i < frames; i++) stepGame(g, []);
-  const event = g.turn !== turn || g.livePort !== port || g.winner !== winner;
-  return { event, snap: serialize(g) };
+  const shotEnded = wasResolve && g.phase !== "resolve";
+  const event = shotEnded
+    || g.turn !== turn
+    || g.livePort !== port
+    || g.winner !== null
+    || `${g.scores[0]}:${g.scores[1]}` !== score;
+  return { event, shotEnded, resolving: g.phase === "resolve", snap: serialize(g) };
+}
+
+// A client asking to reconcile should not be handed a board that is still moving.
+export function settledSnap(room) {
+  if (!room?.started || room.game.phase === "resolve") return null;
+  return serialize(room.game);
 }
 
 // Pure pass over rooms. Mutates disconnect bookkeeping flags only.
@@ -176,9 +185,11 @@ export function sweep(rooms, now, { graceMs = GRACE_MS, frames = 15 } = {}) {
       actions.push({ type: "waiting", code: room.code });
     }
     if (waiting || now < (room.clockStartsAt || 0)) continue;
-    const adv = advanceAim(room, frames);
-    if (adv.event) {
-      actions.push({ type: "state", code: room.code, kind: "tick", snap: adv.snap });
+    const adv = advanceRoom(room, frames);
+    // mid-flick snapshots teleport the pucks. the client is already simulating.
+    if (adv.resolving) continue;
+    if (adv.shotEnded || adv.event) {
+      actions.push({ type: "state", code: room.code, kind: adv.shotEnded ? "shot" : "tick", snap: adv.snap });
     } else if (now - room.lastTickEmit >= 1000) {
       room.lastTickEmit = now;
       actions.push({ type: "state", code: room.code, kind: "tick", snap: adv.snap });

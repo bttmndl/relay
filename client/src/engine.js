@@ -178,6 +178,9 @@ export function createGame(size) {
     livePort: 0,
     portShift: null,
     turnTimeLeft: TURN_FRAMES,
+    shot: 0,
+    queenShotX: null,
+    queenShotY: null,
   };
   // queen starts in the open center. If a shot knocks her off that spot,
   // finishShot puts her back on the hardest open point for the live pocket.
@@ -208,6 +211,7 @@ export function launch(g, idx, ang, v, ev) {
   g.phase = "resolve";
   g.settleFrames = 0;
   g.resolveTime = 0;
+  g.shot = (g.shot || 0) + 1;
   ev.push({ t: "flick" });
   return true;
 }
@@ -466,15 +470,30 @@ function turnTimeoutPass(g, ev) {
 // ---------------- online sync ----------------
 export function serialize(g) {
   return {
-    pucks: g.pucks.map((p) => ({ x: p.x, y: p.y, alive: p.alive, isQueen: !!p.isQueen })),
+    pucks: g.pucks.map((p) => ({
+      x: p.x, y: p.y, vx: p.vx, vy: p.vy,
+      alive: p.alive, isQueen: !!p.isQueen,
+      striker: !!p.striker, charge: p.charge,
+      sink: p.sink ? { px: p.sink.px, py: p.sink.py, s: p.sink.s } : null,
+    })),
     scores: [...g.scores],
     turn: g.turn,
     winner: g.winner,
     streak: g.streak,
     frame: g.frame,
     livePort: g.livePort,
-    portShift: g.portShift,
+    portShift: g.portShift ? { target: g.portShift.target, framesLeft: g.portShift.framesLeft } : null,
     turnTimeLeft: g.turnTimeLeft,
+    phase: g.phase,
+    shot: g.shot || 0,
+    strikerIdx: g.strikerIdx,
+    potsThisShot: g.potsThisShot,
+    poisonThisShot: g.poisonThisShot,
+    deadPortThisShot: g.deadPortThisShot,
+    settleFrames: g.settleFrames,
+    resolveTime: g.resolveTime,
+    queenShotX: g.queenShotX,
+    queenShotY: g.queenShotY,
   };
 }
 
@@ -483,20 +502,59 @@ export function applySync(g, snap) {
     const p = g.pucks[i];
     if (!p) return;
     p.x = sp.x; p.y = sp.y;
+    p.vx = sp.vx || 0; p.vy = sp.vy || 0;
     p.alive = sp.alive;
     p.isQueen = !!sp.isQueen;
-    p.vx = 0; p.vy = 0;
-    p.striker = false; p.charge = null; p.sink = null;
+    p.striker = !!sp.striker;
+    p.charge = sp.charge ?? null;
+    p.sink = sp.sink ? { px: sp.sink.px, py: sp.sink.py, s: sp.sink.s } : null;
   });
   g.scores = [...snap.scores];
   g.turn = snap.turn;
   g.winner = snap.winner;
-  g.streak = snap.streak;
-  g.frame = snap.frame;
+  g.streak = snap.streak ?? 0;
+  g.frame = snap.frame ?? g.frame;
   g.livePort = snap.livePort ?? g.livePort;
-  g.portShift = snap.portShift ?? null;
+  g.portShift = snap.portShift ? { target: snap.portShift.target, framesLeft: snap.portShift.framesLeft } : null;
   g.turnTimeLeft = snap.turnTimeLeft ?? TURN_FRAMES;
-  g.phase = snap.winner !== null ? "done" : "aim";
+  g.shot = snap.shot || 0;
+  g.strikerIdx = snap.strikerIdx ?? -1;
+  g.potsThisShot = snap.potsThisShot || 0;
+  g.poisonThisShot = !!snap.poisonThisShot;
+  g.deadPortThisShot = !!snap.deadPortThisShot;
+  g.settleFrames = snap.settleFrames || 0;
+  g.resolveTime = snap.resolveTime || 0;
+  g.queenShotX = snap.queenShotX ?? null;
+  g.queenShotY = snap.queenShotY ?? null;
+  if (snap.winner !== null && snap.winner !== undefined) g.phase = "done";
+  else if (snap.phase === "resolve" || snap.phase === "done") g.phase = snap.phase;
+  else g.phase = "aim";
+}
+
+// What an online client should do with a server snapshot.
+// While pucks are moving, keep the local shot (same as vs AI) and remember
+// only a *settled* result. Aim-clock ticks from before this flick are ignored.
+export function routeServerSnap(local, msg) {
+  const snap = msg?.snap;
+  if (!snap) return { apply: false, queue: false, announceTimeout: false };
+  if (msg.reason) return { apply: true, queue: false, announceTimeout: false };
+  const waiting = local?.awaitShot || 0;
+  const incoming = snap.shot ?? 0;
+  if (waiting && incoming < waiting) return { apply: false, queue: false, announceTimeout: false };
+  if (local?.phase === "resolve") {
+    if (!waiting || snap.phase === "resolve") return { apply: false, queue: false, announceTimeout: false };
+    return { apply: false, queue: true, announceTimeout: false };
+  }
+  const scores = local?.scores || [0, 0];
+  const sameScore = !!snap.scores && snap.scores[0] === scores[0] && snap.scores[1] === scores[1];
+  const resolvingOurs = waiting && incoming >= waiting;
+  const announceTimeout = !resolvingOurs
+    && msg.kind === "tick"
+    && snap.winner == null
+    && snap.turn !== local?.turn
+    && sameScore
+    && (snap.phase ?? "aim") === "aim";
+  return { apply: true, queue: false, announceTimeout };
 }
 
 // ---------------- AI (local play only) ----------------

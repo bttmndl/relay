@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  createGame, launch, stepGame, serialize, applySync, aiChooseShot,
+  createGame, launch, stepGame, applySync, aiChooseShot, routeServerSnap,
   getLivePorts, portRotateInfo, PNAME, QUEEN_POINTS, STREAK_BONUS_POINTS, TURN_SECONDS, ONLINE_BOARD,
 } from "./engine.js";
 import { getSocket, saveResume } from "./net.js";
@@ -103,7 +103,14 @@ export default function RelayGame({ mode, online, onExit }) {
   const arcs = useRef([]);
   const rejects = useRef([]);
   const drag = useRef(null);
+  const pendingSnap = useRef(null);
+  const awaitShot = useRef(0);
+  const hold = useRef(false);
+  const applyServerRef = useRef(() => {});
+  const gate = useRef({ waiting: mode === "online" && !online?.resumed });
+  const [confirming, setConfirming] = useState(false);
   const me = mode === "online" ? online.playerIndex : null;
+  gate.current.waiting = waitingStart;
 
   const say = (text, col, ms = 1400) => {
     setCallout({ text, col });
@@ -149,6 +156,7 @@ export default function RelayGame({ mode, online, onExit }) {
     setScores([...(G.current.scores)]); setTurn(G.current.turn); setWinner(G.current.winner);
     setTurnSecLeft(Math.ceil(G.current.turnTimeLeft / 60)); setTurnToken(0);
     setStreak(G.current.streak || 0);
+    if (G.current.phase === "resolve") awaitShot.current = G.current.shot || 0;
 
     const beginMatch = () => {
       setWaitingStart(false);
@@ -186,7 +194,10 @@ export default function RelayGame({ mode, online, onExit }) {
       const g = G.current;
       if (!g) return;
       const ev = [];
-      launch(g, idx, ang, v, ev);
+      if (!launch(g, idx, ang, v, ev)) return;
+      awaitShot.current = g.shot || 0;
+      hold.current = false;
+      setConfirming(false);
       drainEvents(ev);
     };
     const applyServer = (snap) => {
@@ -196,20 +207,27 @@ export default function RelayGame({ mode, online, onExit }) {
       setScores([...g.scores]); setTurn(g.turn); setStreak(g.streak || 0);
       setTurnSecLeft(Math.ceil((g.turnTimeLeft || 0) / 60));
       if (g.winner !== null) setWinner(g.winner);
+      hold.current = false;
+      awaitShot.current = 0;
+      setConfirming(false);
     };
+    applyServerRef.current = applyServer;
     const onState = ({ kind, snap, reason }) => {
       const g = G.current;
       if (!g || !snap) return;
-      const turnChanged = snap.turn !== g.turn;
-      const matchEnded = snap.winner != null && g.winner == null;
-      // keep animating a local shot, but never ignore a server timeout or ending
-      if (kind === "tick" && g.phase === "resolve" && !turnChanged && !matchEnded) return;
+      const decision = routeServerSnap(
+        { phase: g.phase, turn: g.turn, scores: g.scores, winner: g.winner, awaitShot: awaitShot.current },
+        { kind, snap, reason },
+      );
+      if (decision.queue) {
+        pendingSnap.current = snap;
+        return;
+      }
+      if (!decision.apply) return;
       const prevTurn = g.turn;
-      const prevScore = `${g.scores[0]}:${g.scores[1]}`;
       applyServer(snap);
       if (reason) say(reason, "#FF6A6A", 1200);
-      const sameScore = `${snap.scores?.[0]}:${snap.scores?.[1]}` === prevScore;
-      if (kind === "tick" && snap.winner == null && snap.turn !== prevTurn && sameScore) {
+      if (decision.announceTimeout && snap.turn !== prevTurn) {
         drag.current = null;
         sfx.current?.reject();
         setTurnToken((t) => t + 1);
@@ -290,8 +308,15 @@ export default function RelayGame({ mode, online, onExit }) {
       else if (e.t === "end") { sfx.current?.win(); setTimeout(() => setWinner(e.winner), 600); }
       else if (e.t === "shotDone") {
         setTurnToken((t) => t + 1);
-        if (mode === "online" && e.shooter === me) {
-          getSocket().emit("syncState", serialize(g));
+        if (mode === "online") {
+          const pending = pendingSnap.current;
+          pendingSnap.current = null;
+          if (pending) applyServerRef.current(pending);
+          else {
+            hold.current = true;
+            setConfirming(true);
+            getSocket().emit("syncState");
+          }
         }
         if (mode === "ai" && g.phase === "aim" && g.turn === 1 && g.winner === null) {
           setTimeout(() => {
@@ -335,10 +360,13 @@ export default function RelayGame({ mode, online, onExit }) {
       let guard = 0;
       while (acc >= STEP && guard < 6) {
         const ev = [];
-        // online: server sweep is the shot clock. stepping it here too let a
-        // local timeout pass the turn, then the next snapshot put it back.
-        stepGame(g, ev, { clock: mode !== "online" });
-        if (ev.length) drainEvents(ev);
+        // online stays put until the shared start time, then simulates the
+        // shot locally — the same loop vs AI uses. the server shot clock is
+        // still authoritative; this one only eases the displayed seconds.
+        if (!(mode === "online" && gate.current.waiting)) {
+          stepGame(g, ev, { clock: mode !== "online" });
+          if (ev.length) drainEvents(ev);
+        }
         acc -= STEP;
         guard++;
       }
@@ -787,7 +815,7 @@ export default function RelayGame({ mode, online, onExit }) {
     const g = G.current;
     if (!g || g.phase !== "aim" || g.winner !== null || waitingStart || oppLeft) return false;
     if (mode === "ai") return g.turn === 0;
-    if (mode === "online") return g.turn === me;
+    if (mode === "online") return g.turn === me && !hold.current;
     return true;
   };
   const getPos = (e) => {
@@ -829,6 +857,11 @@ export default function RelayGame({ mode, online, onExit }) {
       const v = (pow / (g.S * 0.32)) * g.S * 0.036;
       const ev = [];
       if (launch(g, d0.idx, ang, v, ev)) {
+        if (mode === "online") {
+          awaitShot.current = g.shot || 0;
+          hold.current = false;
+          setConfirming(false);
+        }
         drainEvents(ev);
         if (mode === "online") getSocket().emit("flick", { idx: d0.idx, ang, v });
       }
@@ -860,6 +893,7 @@ export default function RelayGame({ mode, online, onExit }) {
     : winner !== null ? "MATCH OVER"
     : waitingStart ? "SYNCING…"
     : mode === "ai" && turn === 1 ? "AI IS ROUTING…"
+    : confirming ? "CONFIRMING SHOT…"
     : mode === "online" ? (turn === me ? "YOUR SHOT — FLICK ANY PUCK" : "OPPONENT IS AIMING…")
     : `${PNAME[turn]} — FLICK ANY PUCK`;
   const pipOn = streak > 0 ? ((streak - 1) % 3) + 1 : 0;

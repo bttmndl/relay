@@ -12,7 +12,7 @@ import { createPgStore } from "./pgstore.js";
 import { normalizeEmail, passwordError, hashPassword, verifyPassword, identityFromHello, EMAIL_TAKEN } from "./auth.js";
 import {
   GRACE_MS, corsOrigin, allow, enqueue, pair, newRoom, restoreRoom, exportRoom,
-  attemptFlick, sweep, log,
+  attemptFlick, sweep, settledSnap, log,
 } from "./logic.js";
 
 const PORT = process.env.PORT || 3001;
@@ -496,15 +496,15 @@ io.on("connection", (socket) => {
     }
     const other = found.room.players[1 - found.index];
     if (other?.socketId) io.to(other.socketId).emit("opponentFlick", payload);
-    io.to(found.room.code).emit("state", { kind: "shot", snap: result.snap });
-    if (result.snap.winner != null) await finishMatch(found.room, result.snap.winner);
     await persistRooms();
   });
 
   socket.on("syncState", () => {
     const found = findBySocket(socket.id);
     if (!found) return;
-    socket.emit("state", { kind: "shot", snap: serialize(found.room.game) });
+    const snap = settledSnap(found.room);
+    if (!snap) return;
+    socket.emit("state", { kind: "shot", snap });
   });
 
   socket.on("emote", (payload = {}) => {
