@@ -923,15 +923,14 @@ export default function RelayGame({ mode, online, onExit }) {
         .scoreline { width: min(520px, 100%); margin-top: 14px; display: grid; grid-template-columns: 1fr auto 1fr; gap: 8px; align-items: center; }
         .panel {
           position: relative; min-height: 78px; border-radius: 18px; box-sizing: border-box;
+          display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 10px;
           background: rgba(8,12,22,.62); backdrop-filter: blur(10px);
         }
         .panel.volt {
-          display: flex; align-items: center; gap: 8px; padding: 8px 12px 8px 10px;
           border: 1.5px solid rgba(255,193,77,.55);
           box-shadow: inset 0 0 14px rgba(255,176,48,.05);
         }
         .panel.ai {
-          display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 8px 10px 8px 12px;
           border: 1.5px solid rgba(62,200,255,.45);
           box-shadow: inset 0 0 14px rgba(62,180,255,.05);
         }
@@ -943,22 +942,28 @@ export default function RelayGame({ mode, online, onExit }) {
           border-color: rgba(90,214,255,.98);
           box-shadow: 0 0 18px rgba(62,180,255,.45), inset 0 0 16px rgba(62,180,255,.1);
         }
-        .panel .bolt { flex: 0 0 auto; filter: drop-shadow(0 0 6px rgba(255,193,77,.65)); }
-        .id { display: flex; flex-direction: column; min-width: 0; }
+        .mark { flex: 0 0 28px; width: 28px; height: 28px; }
+        .panel.volt .mark { filter: drop-shadow(0 0 6px rgba(255,193,77,.65)); }
+        .panel.ai .mark { filter: drop-shadow(0 0 6px rgba(62,200,255,.55)); }
+        .id { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; min-width: 0; }
         .lbl { font-family: 'Orbitron', sans-serif; font-size: 11px; letter-spacing: 2px; line-height: 1; }
-        .num { font-family: 'Rajdhani', sans-serif; font-size: clamp(30px, 8vw, 38px); font-weight: 700; line-height: .85; }
-        .panel.volt .lbl, .panel.volt .num { color: #FFC14D; text-shadow: 0 0 10px rgba(255,193,77,.45); }
+        .panel.volt .lbl { color: #FFC14D; text-shadow: 0 0 10px rgba(255,193,77,.45); }
         .panel.ai .lbl { color: #9BE7FF; text-shadow: 0 0 8px rgba(62,200,255,.35); }
-        .airow { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
         .chip {
-          min-width: 46px; height: 38px; padding: 0 8px; border-radius: 12px;
+          min-width: 46px; height: 36px; padding: 0 10px; border-radius: 12px; box-sizing: border-box;
           display: grid; place-items: center;
-          font-family: 'Rajdhani', sans-serif; font-size: 28px; font-weight: 700; line-height: 1; color: #7FE3FF;
-          border: 1.5px solid rgba(127,227,255,.85);
+          font-family: 'Rajdhani', sans-serif; font-size: 26px; font-weight: 700; line-height: 1;
           background: rgba(6,16,28,.72);
+        }
+        .panel.volt .chip {
+          color: #FFC14D; border: 1.5px solid rgba(255,193,77,.9);
+          box-shadow: 0 0 12px rgba(255,176,48,.28), inset 0 0 10px rgba(255,193,77,.12);
+        }
+        .panel.ai .chip {
+          color: #7FE3FF; border: 1.5px solid rgba(127,227,255,.85);
           box-shadow: 0 0 12px rgba(62,200,255,.28), inset 0 0 10px rgba(62,200,255,.12);
         }
-        .you { display: block; font-style: normal; font-size: 8px; letter-spacing: 1.4px; opacity: .75; margin-top: 2px; }
+        .you { display: block; font-style: normal; font-size: 8px; letter-spacing: 1.4px; opacity: .75; }
         .pips { display: flex; gap: 6px; }
         .pip {
           width: 30px; height: 30px; border-radius: 10px; display: grid; place-items: center;
@@ -1083,11 +1088,11 @@ export default function RelayGame({ mode, online, onExit }) {
 
       <div className="scoreline">
         <div className={turn === 0 && winner === null ? "panel volt live" : "panel volt"}>
-          <svg className="bolt" width="28" height="28" viewBox="0 0 24 24" aria-hidden="true"><path fill="#FFC14D" d="M13 1.5 3.5 13.5h7.2L9.2 22.5 20.5 9.2h-7.1L13 1.5z"/></svg>
+          <svg className="mark" viewBox="0 0 24 24" aria-hidden="true"><path fill="#FFC14D" d="M13 1.5 3.5 13.5h7.2L9.2 22.5 20.5 9.2h-7.1L13 1.5z"/></svg>
           <div className="id">
             <div ref={(el) => { nameRefs.current[0] = el; }} key={`name-0-${nameFlash[0] || 0}`} className="lbl" style={{ animation: nameFlash[0] ? "rlInfuse 420ms ease-out" : undefined }}>{sideLabel(0)}</div>
             {mode === "online" && me === 0 && <i className="you">YOU</i>}
-            <div className="num">{scores[0]}</div>
+            <div className="chip">{scores[0]}</div>
           </div>
           {emoteFx && emoteFx.side === 0 && (
             <div key={emoteFx.key} style={{ position: "absolute", top: -22, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
@@ -1097,18 +1102,23 @@ export default function RelayGame({ mode, online, onExit }) {
           {[1, 2, 3].map((n) => <div key={n} className={pipOn === n ? "pip on" : "pip"}>{n}</div>)}
         </div>
         <div className={turn === 1 && winner === null ? "panel ai live" : "panel ai"}>
-          <div ref={(el) => { nameRefs.current[1] = el; }} key={`name-1-${nameFlash[1] || 0}`} className="lbl" style={{ animation: nameFlash[1] ? "rlInfuse 420ms ease-out" : undefined }}>{sideLabel(1)}</div>
-          {mode === "online" && me === 1 && <i className="you">YOU</i>}
-          <div className="airow">
+          {mode === "ai" ? (
+            <svg className="mark" viewBox="0 0 24 24" fill="none" stroke="#7FE3FF" strokeWidth="1.6" aria-hidden="true">
+              <rect x="4" y="8" width="16" height="11" rx="4"/>
+              <circle cx="9" cy="13.5" r="1.2" fill="#7FE3FF"/>
+              <circle cx="15" cy="13.5" r="1.2" fill="#7FE3FF"/>
+              <path d="M12 8V4.5M9 4.5h6"/>
+            </svg>
+          ) : (
+            <svg className="mark" viewBox="0 0 24 24" fill="none" stroke="#7FE3FF" strokeWidth="1.6" aria-hidden="true">
+              <circle cx="12" cy="8" r="3.2"/>
+              <path d="M5.5 19.2c1.2-3.2 3.5-4.7 6.5-4.7s5.3 1.5 6.5 4.7"/>
+            </svg>
+          )}
+          <div className="id">
+            <div ref={(el) => { nameRefs.current[1] = el; }} key={`name-1-${nameFlash[1] || 0}`} className="lbl" style={{ animation: nameFlash[1] ? "rlInfuse 420ms ease-out" : undefined }}>{sideLabel(1)}</div>
+            {mode === "online" && me === 1 && <i className="you">YOU</i>}
             <div className="chip">{scores[1]}</div>
-            {mode === "ai" && (
-              <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#7FE3FF" strokeWidth="1.6" aria-hidden="true">
-                <rect x="4" y="8" width="16" height="11" rx="4"/>
-                <circle cx="9" cy="13.5" r="1.2" fill="#7FE3FF"/>
-                <circle cx="15" cy="13.5" r="1.2" fill="#7FE3FF"/>
-                <path d="M12 8V4.5M9 4.5h6"/>
-              </svg>
-            )}
           </div>
           {emoteFx && emoteFx.side === 1 && (
             <div key={emoteFx.key} style={{ position: "absolute", top: -22, left: "50%", transform: "translateX(-50%)", fontSize: 24, animation: "rlEmote 1.8s ease-out forwards", pointerEvents: "none" }}>{emoteFx.emote}</div>
